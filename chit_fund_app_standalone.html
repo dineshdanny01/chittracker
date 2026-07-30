@@ -1,0 +1,737 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Chit Fund Tracker</title>
+<style>
+  :root{
+    --ink:#1f2a24;
+    --paper:#f6f2e9;
+    --card:#fffdf8;
+    --line:#ddd3ba;
+    --brass:#a8763e;
+    --brass-dark:#7d5527;
+    --teal:#25554a;
+    --teal-light:#e7efec;
+    --loss:#a0433a;
+    --gain:#25703f;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+  body{
+    margin:0;
+    background:var(--paper);
+    color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;
+    padding-bottom:70px;
+  }
+  header{
+    background:var(--teal);
+    color:#fff;
+    padding:16px 16px 14px;
+    position:sticky;
+    top:0;
+    z-index:10;
+  }
+  header h1{margin:0;font-size:1.15rem;font-weight:700;}
+  header .sub{font-size:0.72rem;opacity:0.85;margin-top:2px;}
+  .tabs{
+    display:flex;
+    background:#1c463c;
+  }
+  .tab{
+    flex:1;
+    text-align:center;
+    padding:11px 4px;
+    font-size:0.78rem;
+    color:#cfe0da;
+    cursor:pointer;
+    border-bottom:3px solid transparent;
+  }
+  .tab.active{
+    color:#fff;
+    border-bottom-color:var(--brass);
+    font-weight:600;
+  }
+  main{padding:14px;max-width:640px;margin:0 auto;}
+  .screen{display:none;}
+  .screen.active{display:block;}
+  .card{
+    background:var(--card);
+    border:1px solid var(--line);
+    border-radius:12px;
+    padding:14px;
+    margin-bottom:12px;
+    box-shadow:0 1px 3px rgba(0,0,0,0.04);
+  }
+  .card h2{
+    font-size:0.85rem;
+    text-transform:uppercase;
+    letter-spacing:0.6px;
+    color:var(--teal);
+    margin:0 0 12px;
+  }
+  label{
+    display:block;
+    font-size:0.72rem;
+    color:#6b6152;
+    margin:8px 0 4px;
+  }
+  label:first-child{margin-top:0;}
+  input, select{
+    width:100%;
+    padding:10px 10px;
+    border:1px solid var(--line);
+    border-radius:8px;
+    font-size:0.95rem;
+    background:#fff;
+    color:var(--ink);
+  }
+  .row2{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+  button{
+    border:none;
+    border-radius:8px;
+    padding:11px 14px;
+    font-size:0.9rem;
+    font-weight:600;
+    cursor:pointer;
+  }
+  .btn-primary{
+    background:var(--teal);
+    color:#fff;
+    width:100%;
+    margin-top:12px;
+  }
+  .btn-primary:active{background:#1c463c;}
+  .btn-ghost{
+    background:transparent;
+    color:var(--teal);
+    border:1px solid var(--teal);
+  }
+  .btn-danger{
+    background:transparent;
+    color:var(--loss);
+    font-size:0.72rem;
+    padding:4px 8px;
+  }
+  .group-pill{
+    display:inline-block;
+    padding:5px 12px;
+    border-radius:20px;
+    border:1px solid var(--teal);
+    color:var(--teal);
+    font-size:0.78rem;
+    margin:0 6px 6px 0;
+    cursor:pointer;
+  }
+  .group-pill.active{background:var(--teal);color:#fff;}
+  .list-item{
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+    padding:9px 0;
+    border-bottom:1px solid var(--line);
+    font-size:0.88rem;
+  }
+  .list-item:last-child{border-bottom:none;}
+  .list-item .meta{font-size:0.72rem;color:#8a8070;}
+  table{width:100%;border-collapse:collapse;font-size:0.78rem;}
+  th{
+    text-align:right;
+    padding:7px 4px;
+    background:var(--teal);
+    color:#fff;
+    font-weight:600;
+    font-size:0.65rem;
+    text-transform:uppercase;
+  }
+  th:first-child,td:first-child{text-align:left;}
+  td{padding:6px 4px;text-align:right;border-bottom:1px solid var(--line);}
+  .tablewrap{overflow-x:auto;}
+  .gain{color:var(--gain);font-weight:700;}
+  .loss{color:var(--loss);font-weight:700;}
+  .tag-yes{color:var(--gain);font-weight:700;}
+  .tag-no{color:var(--brass-dark);}
+  .stat{
+    display:flex;justify-content:space-between;
+    padding:8px 0;border-bottom:1px dashed var(--line);
+    font-size:0.88rem;
+  }
+  .stat:last-child{border-bottom:none;}
+  .stat .val{font-weight:700;}
+  .empty{
+    text-align:center;
+    color:#948a78;
+    font-size:0.85rem;
+    padding:30px 10px;
+  }
+  .fab-row{display:flex;gap:8px;margin-top:10px;}
+  .fab-row button{flex:1;}
+  #toast{
+    position:fixed;bottom:76px;left:50%;transform:translateX(-50%);
+    background:var(--ink);color:#fff;padding:9px 18px;border-radius:20px;
+    font-size:0.8rem;opacity:0;transition:opacity 0.25s;pointer-events:none;
+    z-index:100;
+  }
+  #toast.show{opacity:0.95;}
+  .checkbox-row{
+    display:flex;align-items:center;gap:8px;margin-top:10px;
+  }
+  .checkbox-row input{width:auto;}
+  .checkbox-row label{margin:0;font-size:0.85rem;color:var(--ink);}
+  .loading{text-align:center;padding:40px;color:#948a78;}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>சிட்டு Tracker</h1>
+  <div class="sub" id="headerSub">Loading…</div>
+</header>
+<div class="tabs">
+  <div class="tab active" data-screen="business">Business</div>
+  <div class="tab" data-screen="overview">Groups</div>
+  <div class="tab" data-screen="log">Log Entry</div>
+  <div class="tab" data-screen="members">Members</div>
+  <div class="tab" data-screen="groups">Setup</div>
+</div>
+
+<main>
+
+  <!-- BUSINESS (all groups combined) -->
+  <div class="screen active" id="screen-business">
+    <div class="card" id="bizEmptyCard">
+      <div class="empty">Add a chit group and log some entries to see your overall business numbers here.</div>
+    </div>
+    <div class="card" id="bizSummaryCard" style="display:none;">
+      <h2>Across All Groups</h2>
+      <div id="bizSummary"></div>
+    </div>
+    <div class="card" id="bizPendingCard" style="display:none;">
+      <h2>Members Still Waiting on Payout</h2>
+      <div id="bizPending"></div>
+    </div>
+    <div class="card" id="bizTableCard" style="display:none;">
+      <h2>By Group</h2>
+      <div class="tablewrap"><table id="bizTable"></table></div>
+    </div>
+  </div>
+
+  <!-- GROUPS -->
+  <div class="screen" id="screen-groups">
+    <div class="card">
+      <h2>New Chit Group</h2>
+      <label>Group name</label>
+      <input id="g-name" placeholder="e.g. Group A - 50k">
+      <div class="row2">
+        <div><label>Base pot (₹)</label><input id="g-basepot" type="number" value="50000"></div>
+        <div><label>Total months</label><input id="g-months" type="number" value="11"></div>
+      </div>
+      <div class="row2">
+        <div><label>Installment before taking (₹)</label><input id="g-before" type="number" value="5000"></div>
+        <div><label>Installment after taking (₹)</label><input id="g-after" type="number" value="6000"></div>
+      </div>
+      <button class="btn-primary" onclick="createGroup()">Add Group</button>
+    </div>
+    <div class="card">
+      <h2>Backup &amp; Restore</h2>
+      <div class="meta" style="margin-bottom:10px;">Your data is saved only on this device/browser. Export a backup regularly, especially before clearing browser data or switching phones.</div>
+      <div class="fab-row">
+        <button class="btn-ghost" onclick="exportData()">Export Backup</button>
+        <button class="btn-ghost" onclick="document.getElementById('importFile').click()">Import Backup</button>
+      </div>
+      <input type="file" id="importFile" accept=".json" style="display:none;" onchange="importData(event)">
+    </div>
+    <div class="card">
+      <h2>Your Groups</h2>
+      <div id="groupsList"><div class="empty">No groups yet — add one above.</div></div>
+    </div>
+  </div>
+
+  <!-- MEMBERS -->
+  <div class="screen" id="screen-members">
+    <div class="card">
+      <h2>Select Group</h2>
+      <div id="memberGroupPicker"></div>
+    </div>
+    <div class="card">
+      <h2>Add Member</h2>
+      <label>Member name</label>
+      <input id="m-name" placeholder="e.g. Ravi Kumar">
+      <label>Join month (their month 1)</label>
+      <input id="m-joinmonth" placeholder="e.g. Jul 2026">
+      <button class="btn-primary" onclick="addMember()">Add Member</button>
+    </div>
+    <div class="card">
+      <h2>Members in this group</h2>
+      <div id="membersList"><div class="empty">Select or create a group first.</div></div>
+    </div>
+  </div>
+
+  <!-- LOG -->
+  <div class="screen" id="screen-log">
+    <div class="card">
+      <h2>Log a Payment / Payout</h2>
+      <label>Group</label>
+      <select id="l-group" onchange="onLogGroupChange()"></select>
+      <label>Member</label>
+      <select id="l-member"></select>
+      <div class="row2">
+        <div><label>Month No. (this member's own count)</label><input id="l-monthno" type="number" min="1" value="1"></div>
+        <div><label>Calendar month</label><input id="l-calmonth" placeholder="e.g. Jul 2026"></div>
+      </div>
+      <div class="row2">
+        <div><label>Amount due (₹)</label><input id="l-due" type="number"></div>
+        <div><label>Amount paid (₹)</label><input id="l-paid" type="number"></div>
+      </div>
+      <div class="checkbox-row">
+        <input type="checkbox" id="l-payout" onchange="togglePayoutFields()">
+        <label for="l-payout">This member took their chit payout this month</label>
+      </div>
+      <div id="payoutFields" style="display:none;">
+        <label>Payout amount (₹)</label>
+        <input id="l-payoutamt" type="number">
+      </div>
+      <label>Notes (optional)</label>
+      <input id="l-notes" placeholder="e.g. shared slot with Priya">
+      <button class="btn-primary" onclick="addEntry()">Save Entry</button>
+    </div>
+    <div class="card">
+      <h2>Recent Entries</h2>
+      <div id="recentEntries"><div class="empty">Nothing logged yet.</div></div>
+    </div>
+  </div>
+
+  <!-- OVERVIEW -->
+  <div class="screen" id="screen-overview">
+    <div class="card">
+      <h2>Group</h2>
+      <div id="overviewGroupPicker"></div>
+    </div>
+    <div class="card" id="overviewSummaryCard" style="display:none;">
+      <h2>Summary</h2>
+      <div id="overviewSummary"></div>
+    </div>
+    <div class="card" id="overviewTableCard" style="display:none;">
+      <h2>Members</h2>
+      <div class="tablewrap"><table id="overviewTable"></table></div>
+    </div>
+    <div class="card" id="overviewEmptyCard">
+      <div class="empty">Create a group and add members to see the overview.</div>
+    </div>
+  </div>
+
+</main>
+
+<div id="toast"></div>
+
+<script>
+let STATE = { groups: [], members: [], entries: [] };
+let selectedGroupId = { members: null, overview: null };
+let ready = false;
+
+function uid(){ return 'id' + Math.random().toString(36).slice(2,10) + Date.now().toString(36); }
+
+function toast(msg){
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(()=>t.classList.remove('show'), 1600);
+}
+
+async function saveState(){
+  try{
+    localStorage.setItem('chit-app-state', JSON.stringify(STATE));
+  }catch(e){
+    console.error('Storage save error', e);
+    toast('Could not save — your browser may be blocking storage');
+  }
+}
+
+async function loadState(){
+  try{
+    const raw = localStorage.getItem('chit-app-state');
+    if(raw){ STATE = JSON.parse(raw); }
+  }catch(e){
+    console.log('No existing data yet, starting fresh.');
+  }
+  ready = true;
+  document.getElementById('headerSub').textContent =
+    STATE.groups.length ? `${STATE.groups.length} group(s) · saved on this device` : 'Add your first chit group to begin';
+  renderAll();
+}
+
+// ---------- Tabs ----------
+document.querySelectorAll('.tab').forEach(tab=>{
+  tab.addEventListener('click', ()=>{
+    document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+    document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
+    tab.classList.add('active');
+    document.getElementById('screen-'+tab.dataset.screen).classList.add('active');
+    renderAll();
+  });
+});
+
+// ---------- Groups ----------
+// ---------- Backup / Restore ----------
+function exportData(){
+  const blob = new Blob([JSON.stringify(STATE, null, 2)], {type:'application/json'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  const stamp = new Date().toISOString().slice(0,10);
+  a.href = url;
+  a.download = `chit-fund-backup-${stamp}.json`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  toast('Backup downloaded');
+}
+
+function importData(event){
+  const file = event.target.files[0];
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = function(e){
+    try{
+      const parsed = JSON.parse(e.target.result);
+      if(!parsed.groups || !parsed.members || !parsed.entries){
+        toast('That file doesn\'t look like a valid backup');
+        return;
+      }
+      if(STATE.groups.length && !confirm('This will replace all current data on this device with the backup. Continue?')) return;
+      STATE = parsed;
+      saveState();
+      toast('Backup restored');
+      renderAll();
+    }catch(err){
+      toast('Could not read that file');
+    }
+  };
+  reader.readAsText(file);
+  event.target.value = '';
+}
+
+function createGroup(){
+  const name = document.getElementById('g-name').value.trim();
+  if(!name){ toast('Enter a group name'); return; }
+  const group = {
+    id: uid(),
+    name,
+    basePot: parseFloat(document.getElementById('g-basepot').value) || 0,
+    months: parseInt(document.getElementById('g-months').value) || 11,
+    before: parseFloat(document.getElementById('g-before').value) || 0,
+    after: parseFloat(document.getElementById('g-after').value) || 0,
+  };
+  STATE.groups.push(group);
+  document.getElementById('g-name').value = '';
+  saveState();
+  toast('Group added');
+  renderAll();
+}
+
+function deleteGroup(id){
+  if(!confirm('Delete this group and all its members and log entries? This cannot be undone.')) return;
+  STATE.groups = STATE.groups.filter(g=>g.id!==id);
+  STATE.members = STATE.members.filter(m=>m.groupId!==id);
+  STATE.entries = STATE.entries.filter(e=>e.groupId!==id);
+  saveState();
+  renderAll();
+}
+
+function renderGroupsList(){
+  const el = document.getElementById('groupsList');
+  if(!STATE.groups.length){ el.innerHTML = '<div class="empty">No groups yet — add one above.</div>'; return; }
+  el.innerHTML = STATE.groups.map(g=>{
+    const memberCount = STATE.members.filter(m=>m.groupId===g.id).length;
+    return `<div class="list-item">
+      <div>
+        <div><strong>${escapeHtml(g.name)}</strong></div>
+        <div class="meta">₹${g.basePot.toLocaleString('en-IN')} pot · ${g.months} months · ${memberCount} members</div>
+      </div>
+      <button class="btn-danger" onclick="deleteGroup('${g.id}')">Delete</button>
+    </div>`;
+  }).join('');
+}
+
+// ---------- Members ----------
+function renderGroupPicker(containerId, storeKey, onSelect){
+  const el = document.getElementById(containerId);
+  if(!STATE.groups.length){ el.innerHTML = '<div class="empty">No groups yet. Create one in the Groups tab.</div>'; return; }
+  if(!selectedGroupId[storeKey] || !STATE.groups.find(g=>g.id===selectedGroupId[storeKey])){
+    selectedGroupId[storeKey] = STATE.groups[0].id;
+  }
+  el.innerHTML = STATE.groups.map(g=>
+    `<span class="group-pill ${g.id===selectedGroupId[storeKey]?'active':''}" onclick="selectGroup('${storeKey}','${g.id}')">${escapeHtml(g.name)}</span>`
+  ).join('');
+  if(onSelect) onSelect();
+}
+
+function selectGroup(storeKey, id){
+  selectedGroupId[storeKey] = id;
+  renderAll();
+}
+
+function addMember(){
+  const gid = selectedGroupId.members;
+  if(!gid){ toast('Select a group first'); return; }
+  const name = document.getElementById('m-name').value.trim();
+  if(!name){ toast('Enter a member name'); return; }
+  const joinMonth = document.getElementById('m-joinmonth').value.trim();
+  STATE.members.push({ id: uid(), groupId: gid, name, joinMonth });
+  document.getElementById('m-name').value = '';
+  document.getElementById('m-joinmonth').value = '';
+  saveState();
+  toast('Member added');
+  renderAll();
+}
+
+function deleteMember(id){
+  if(!confirm('Remove this member and their log entries?')) return;
+  STATE.members = STATE.members.filter(m=>m.id!==id);
+  STATE.entries = STATE.entries.filter(e=>e.memberId!==id);
+  saveState();
+  renderAll();
+}
+
+function renderMembersList(){
+  const el = document.getElementById('membersList');
+  const gid = selectedGroupId.members;
+  if(!gid){ el.innerHTML = '<div class="empty">Select or create a group first.</div>'; return; }
+  const members = STATE.members.filter(m=>m.groupId===gid);
+  if(!members.length){ el.innerHTML = '<div class="empty">No members in this group yet.</div>'; return; }
+  el.innerHTML = members.map(m=>`<div class="list-item">
+    <div>
+      <div><strong>${escapeHtml(m.name)}</strong></div>
+      <div class="meta">Joined: ${escapeHtml(m.joinMonth || '—')}</div>
+    </div>
+    <button class="btn-danger" onclick="deleteMember('${m.id}')">Remove</button>
+  </div>`).join('');
+}
+
+// ---------- Log ----------
+function renderLogGroupSelect(){
+  const sel = document.getElementById('l-group');
+  const prev = sel.value;
+  sel.innerHTML = STATE.groups.map(g=>`<option value="${g.id}">${escapeHtml(g.name)}</option>`).join('');
+  if(prev && STATE.groups.find(g=>g.id===prev)) sel.value = prev;
+  onLogGroupChange();
+}
+
+function onLogGroupChange(){
+  const gid = document.getElementById('l-group').value;
+  const group = STATE.groups.find(g=>g.id===gid);
+  const memberSel = document.getElementById('l-member');
+  const members = STATE.members.filter(m=>m.groupId===gid);
+  memberSel.innerHTML = members.length
+    ? members.map(m=>`<option value="${m.id}">${escapeHtml(m.name)}</option>`).join('')
+    : '<option value="">No members in this group</option>';
+  if(group){
+    document.getElementById('l-due').value = group.before;
+    document.getElementById('l-paid').value = group.before;
+  }
+}
+
+function togglePayoutFields(){
+  const checked = document.getElementById('l-payout').checked;
+  document.getElementById('payoutFields').style.display = checked ? 'block' : 'none';
+}
+
+function addEntry(){
+  const groupId = document.getElementById('l-group').value;
+  const memberId = document.getElementById('l-member').value;
+  if(!groupId || !memberId){ toast('Select a group and member'); return; }
+  const entry = {
+    id: uid(),
+    groupId, memberId,
+    monthNo: parseInt(document.getElementById('l-monthno').value) || 1,
+    calendarMonth: document.getElementById('l-calmonth').value.trim(),
+    amountDue: parseFloat(document.getElementById('l-due').value) || 0,
+    amountPaid: parseFloat(document.getElementById('l-paid').value) || 0,
+    tookPayout: document.getElementById('l-payout').checked,
+    payoutAmount: document.getElementById('l-payout').checked ? (parseFloat(document.getElementById('l-payoutamt').value) || 0) : 0,
+    notes: document.getElementById('l-notes').value.trim(),
+    ts: Date.now(),
+  };
+  STATE.entries.push(entry);
+  document.getElementById('l-monthno').value = (entry.monthNo + 1);
+  document.getElementById('l-calmonth').value = '';
+  document.getElementById('l-payout').checked = false;
+  document.getElementById('l-payoutamt').value = '';
+  document.getElementById('l-notes').value = '';
+  togglePayoutFields();
+  saveState();
+  toast('Entry saved');
+  renderAll();
+}
+
+function deleteEntry(id){
+  STATE.entries = STATE.entries.filter(e=>e.id!==id);
+  saveState();
+  renderAll();
+}
+
+function renderRecentEntries(){
+  const el = document.getElementById('recentEntries');
+  const sorted = [...STATE.entries].sort((a,b)=>b.ts-a.ts).slice(0,15);
+  if(!sorted.length){ el.innerHTML = '<div class="empty">Nothing logged yet.</div>'; return; }
+  el.innerHTML = sorted.map(e=>{
+    const member = STATE.members.find(m=>m.id===e.memberId);
+    const group = STATE.groups.find(g=>g.id===e.groupId);
+    return `<div class="list-item">
+      <div>
+        <div><strong>${escapeHtml(member?member.name:'—')}</strong> · month ${e.monthNo} ${e.tookPayout?'<span class="tag-yes">· TOOK PAYOUT ₹'+e.payoutAmount.toLocaleString('en-IN')+'</span>':''}</div>
+        <div class="meta">${escapeHtml(group?group.name:'—')} · paid ₹${e.amountPaid.toLocaleString('en-IN')} of ₹${e.amountDue.toLocaleString('en-IN')}${e.notes?' · '+escapeHtml(e.notes):''}</div>
+      </div>
+      <button class="btn-danger" onclick="deleteEntry('${e.id}')">✕</button>
+    </div>`;
+  }).join('');
+}
+
+// ---------- Overview ----------
+function renderOverview(){
+  const gid = selectedGroupId.overview;
+  const summaryCard = document.getElementById('overviewSummaryCard');
+  const tableCard = document.getElementById('overviewTableCard');
+  const emptyCard = document.getElementById('overviewEmptyCard');
+
+  if(!gid){
+    summaryCard.style.display='none'; tableCard.style.display='none'; emptyCard.style.display='block';
+    return;
+  }
+  const members = STATE.members.filter(m=>m.groupId===gid);
+  if(!members.length){
+    summaryCard.style.display='none'; tableCard.style.display='none';
+    emptyCard.style.display='block';
+    emptyCard.innerHTML = '<div class="empty">No members in this group yet. Add some in the Members tab.</div>';
+    return;
+  }
+  emptyCard.style.display='none';
+  summaryCard.style.display='block';
+  tableCard.style.display='block';
+
+  const groupEntries = STATE.entries.filter(e=>e.groupId===gid);
+  let totalCollected = 0, totalPaidOut = 0, takenCount = 0;
+
+  const rows = members.map(m=>{
+    const mine = groupEntries.filter(e=>e.memberId===m.id);
+    const totalPaid = mine.reduce((s,e)=>s+e.amountPaid,0);
+    const payoutEntry = mine.find(e=>e.tookPayout);
+    totalCollected += totalPaid;
+    if(payoutEntry){ totalPaidOut += payoutEntry.payoutAmount; takenCount++; }
+    const net = (payoutEntry?payoutEntry.payoutAmount:0) - totalPaid;
+    return { name:m.name, monthsLogged: mine.length, totalPaid,
+      took: !!payoutEntry, monthTaken: payoutEntry?payoutEntry.monthNo:'—',
+      payoutAmount: payoutEntry?payoutEntry.payoutAmount:0, net };
+  });
+
+  document.getElementById('overviewSummary').innerHTML = `
+    <div class="stat"><span>Total collected so far</span><span class="val">₹${totalCollected.toLocaleString('en-IN')}</span></div>
+    <div class="stat"><span>Total paid out</span><span class="val">₹${totalPaidOut.toLocaleString('en-IN')}</span></div>
+    <div class="stat"><span>In hand / balance</span><span class="val ${(totalCollected-totalPaidOut)>=0?'gain':'loss'}">₹${(totalCollected-totalPaidOut).toLocaleString('en-IN')}</span></div>
+    <div class="stat"><span>Taken payout</span><span class="val">${takenCount} of ${members.length}</span></div>
+    <div class="stat"><span>Still waiting</span><span class="val">${members.length-takenCount}</span></div>
+  `;
+
+  const table = document.getElementById('overviewTable');
+  table.innerHTML = `<tr><th>Member</th><th>Paid</th><th>Taken?</th><th>Month</th><th>Payout</th><th>Net</th></tr>` +
+    rows.map(r=>`<tr>
+      <td>${escapeHtml(r.name)}</td>
+      <td>₹${r.totalPaid.toLocaleString('en-IN')}</td>
+      <td class="${r.took?'tag-yes':'tag-no'}">${r.took?'Yes':'No'}</td>
+      <td>${r.monthTaken}</td>
+      <td>${r.took?'₹'+r.payoutAmount.toLocaleString('en-IN'):'—'}</td>
+      <td class="${r.net>=0?'gain':'loss'}">${r.took ? (r.net>=0?'+':'')+'₹'+r.net.toLocaleString('en-IN') : '—'}</td>
+    </tr>`).join('');
+}
+
+// ---------- Business (all groups) ----------
+function renderBusiness(){
+  const emptyCard = document.getElementById('bizEmptyCard');
+  const summaryCard = document.getElementById('bizSummaryCard');
+  const pendingCard = document.getElementById('bizPendingCard');
+  const tableCard = document.getElementById('bizTableCard');
+
+  if(!STATE.groups.length || !STATE.members.length){
+    emptyCard.style.display='block';
+    summaryCard.style.display='none'; pendingCard.style.display='none'; tableCard.style.display='none';
+    return;
+  }
+  emptyCard.style.display='none';
+  summaryCard.style.display='block';
+  tableCard.style.display='block';
+
+  let grandCollected = 0, grandPaidOut = 0, grandMembers = 0, grandTaken = 0;
+  const pendingList = [];
+  const groupRows = STATE.groups.map(g=>{
+    const members = STATE.members.filter(m=>m.groupId===g.id);
+    const entries = STATE.entries.filter(e=>e.groupId===g.id);
+    let collected = 0, paidOut = 0, taken = 0;
+    members.forEach(m=>{
+      const mine = entries.filter(e=>e.memberId===m.id);
+      const paid = mine.reduce((s,e)=>s+e.amountPaid,0);
+      collected += paid;
+      const payoutEntry = mine.find(e=>e.tookPayout);
+      if(payoutEntry){ paidOut += payoutEntry.payoutAmount; taken++; }
+      else if(members.length){ pendingList.push({group: g.name, member: m.name, paid}); }
+    });
+    grandCollected += collected;
+    grandPaidOut += paidOut;
+    grandMembers += members.length;
+    grandTaken += taken;
+    return { name: g.name, members: members.length, collected, paidOut, profit: collected-paidOut, taken };
+  });
+
+  const grandProfit = grandCollected - grandPaidOut;
+  document.getElementById('bizSummary').innerHTML = `
+    <div class="stat"><span>Total groups running</span><span class="val">${STATE.groups.length}</span></div>
+    <div class="stat"><span>Total members</span><span class="val">${grandMembers}</span></div>
+    <div class="stat"><span>Total collected (all groups)</span><span class="val">₹${grandCollected.toLocaleString('en-IN')}</span></div>
+    <div class="stat"><span>Total paid out (all groups)</span><span class="val">₹${grandPaidOut.toLocaleString('en-IN')}</span></div>
+    <div class="stat"><span>In hand across the business</span><span class="val ${grandProfit>=0?'gain':'loss'}">₹${grandProfit.toLocaleString('en-IN')}</span></div>
+    <div class="stat"><span>Payouts given</span><span class="val">${grandTaken} of ${grandMembers}</span></div>
+  `;
+
+  if(pendingList.length){
+    pendingCard.style.display = 'block';
+    document.getElementById('bizPending').innerHTML = pendingList.map(p=>
+      `<div class="list-item"><div><strong>${escapeHtml(p.member)}</strong><div class="meta">${escapeHtml(p.group)}</div></div><div class="meta">paid so far ₹${p.paid.toLocaleString('en-IN')}</div></div>`
+    ).join('');
+  } else {
+    pendingCard.style.display = 'none';
+  }
+
+  const table = document.getElementById('bizTable');
+  table.innerHTML = `<tr><th>Group</th><th>Members</th><th>Collected</th><th>Paid Out</th><th>In Hand</th></tr>` +
+    groupRows.map(r=>`<tr>
+      <td>${escapeHtml(r.name)}</td>
+      <td>${r.taken}/${r.members}</td>
+      <td>₹${r.collected.toLocaleString('en-IN')}</td>
+      <td>₹${r.paidOut.toLocaleString('en-IN')}</td>
+      <td class="${r.profit>=0?'gain':'loss'}">₹${r.profit.toLocaleString('en-IN')}</td>
+    </tr>`).join('');
+}
+
+function escapeHtml(s){
+  if(s==null) return '';
+  return String(s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function renderAll(){
+  if(!ready) return;
+  renderBusiness();
+  renderGroupsList();
+  renderGroupPicker('memberGroupPicker','members', renderMembersList);
+  renderMembersList();
+  renderLogGroupSelect();
+  renderRecentEntries();
+  renderGroupPicker('overviewGroupPicker','overview', renderOverview);
+  renderOverview();
+  document.getElementById('headerSub').textContent =
+    STATE.groups.length ? `${STATE.groups.length} group(s) · saved on this device` : 'Add your first chit group to begin';
+}
+
+loadState();
+</script>
+</body>
+</html>
