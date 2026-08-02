@@ -319,8 +319,19 @@
       <button class="btn-primary" onclick="addEntry()">Save Entry</button>
     </div>
     <div class="card">
-      <h2>Recent Entries</h2>
+      <h2>All Entries</h2>
+      <div class="row2" style="margin-bottom:10px;">
+        <div>
+          <label>Filter by group</label>
+          <select id="log-filter-group" onchange="renderRecentEntries()"><option value="">All groups</option></select>
+        </div>
+        <div>
+          <label>Filter by member</label>
+          <select id="log-filter-member" onchange="renderRecentEntries()"><option value="">All members</option></select>
+        </div>
+      </div>
       <div id="recentEntries"><div class="empty">Nothing logged yet.</div></div>
+      <button class="btn-ghost" id="showMoreEntriesBtn" style="width:100%;margin-top:10px;display:none;" onclick="expandEntryList()">Show all entries</button>
     </div>
   </div>
 
@@ -850,11 +861,53 @@ function deleteEntry(id){
   renderAll();
 }
 
+let entryListExpanded = false;
+
+function expandEntryList(){
+  entryListExpanded = true;
+  renderRecentEntries();
+}
+
+function renderEntryFilters(){
+  const gSel = document.getElementById('log-filter-group');
+  const mSel = document.getElementById('log-filter-member');
+  const prevG = gSel.value;
+  const prevM = mSel.value;
+  gSel.innerHTML = '<option value="">All groups</option>' +
+    STATE.groups.map(g=>`<option value="${g.id}">${escapeHtml(g.name)}</option>`).join('');
+  if(prevG && STATE.groups.find(g=>g.id===prevG)) gSel.value = prevG;
+
+  const gid = gSel.value;
+  const memberPool = gid ? STATE.members.filter(m=>m.groupId===gid) : STATE.members;
+  mSel.innerHTML = '<option value="">All members</option>' +
+    memberPool.map(m=>`<option value="${m.id}">${escapeHtml(m.name)}</option>`).join('');
+  if(prevM && memberPool.find(m=>m.id===prevM)) mSel.value = prevM;
+}
+
 function renderRecentEntries(){
+  renderEntryFilters();
   const el = document.getElementById('recentEntries');
-  const sorted = [...STATE.entries].sort((a,b)=>b.ts-a.ts).slice(0,15);
-  if(!sorted.length){ el.innerHTML = '<div class="empty">Nothing logged yet.</div>'; return; }
-  el.innerHTML = sorted.map(e=>{
+  const showMoreBtn = document.getElementById('showMoreEntriesBtn');
+  const filterGroup = document.getElementById('log-filter-group').value;
+  const filterMember = document.getElementById('log-filter-member').value;
+
+  let filtered = [...STATE.entries];
+  if(filterGroup) filtered = filtered.filter(e=>e.groupId===filterGroup);
+  if(filterMember) filtered = filtered.filter(e=>e.memberId===filterMember);
+  filtered.sort((a,b)=>(b.monthNo-a.monthNo) || (b.ts-a.ts));
+
+  if(!filtered.length){
+    el.innerHTML = '<div class="empty">No entries yet' + (filterGroup||filterMember ? ' matching this filter.' : '.') + '</div>';
+    showMoreBtn.style.display = 'none';
+    return;
+  }
+
+  const CAP = 40;
+  const toShow = entryListExpanded ? filtered : filtered.slice(0, CAP);
+  showMoreBtn.style.display = (!entryListExpanded && filtered.length > CAP) ? 'block' : 'none';
+  showMoreBtn.textContent = `Show all ${filtered.length} entries`;
+
+  el.innerHTML = toShow.map(e=>{
     const member = STATE.members.find(m=>m.id===e.memberId);
     const group = STATE.groups.find(g=>g.id===e.groupId);
     return `<div class="list-item">
@@ -865,6 +918,10 @@ function renderRecentEntries(){
       <button class="btn-danger" onclick="deleteEntry('${e.id}')">✕</button>
     </div>`;
   }).join('');
+
+  if(!entryListExpanded && filtered.length > CAP){
+    el.innerHTML += `<div class="meta" style="text-align:center;padding-top:8px;">showing latest ${CAP} of ${filtered.length} — all are saved, use the button below to see everything</div>`;
+  }
 }
 
 // ---------- Overview ----------
