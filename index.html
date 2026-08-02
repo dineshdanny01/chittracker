@@ -486,29 +486,36 @@ function importExcel(event){
 
       const memberIdMap = {};
       const newMembers = [];
-      let skippedMembers = 0;
-      memberRows.forEach(row=>{
+      const memberSkips = []; // {row, reason}
+      memberRows.forEach((row, idx)=>{
+        const excelRow = idx + 2;
         const code = String(row['Member ID']||'').trim();
         const gcode = String(row['Group ID']||'').trim();
         const name = String(row['Member Name']||'').trim();
-        if(!code || !name) return;
+        if(!code && !name && !gcode) return; // fully blank row, not worth reporting
+        if(!code || !name){ memberSkips.push({row:excelRow, reason:'missing Member ID or Member Name'}); return; }
         const groupId = groupIdMap[gcode];
-        if(!groupId){ skippedMembers++; return; }
+        if(!groupId){ memberSkips.push({row:excelRow, reason:`Group ID "${gcode}" not found in Groups sheet`}); return; }
         const id = uid();
         memberIdMap[code] = id;
         newMembers.push({ id, groupId, name, joinMonth: String(row['Join Month']||'').trim() });
       });
 
       const newEntries = [];
-      let skippedEntries = 0;
-      entryRows.forEach(row=>{
+      const entrySkips = []; // {row, reason}
+      entryRows.forEach((row, idx)=>{
+        const excelRow = idx + 2;
         const gcode = String(row['Group ID']||'').trim();
         const mcode = String(row['Member ID']||'').trim();
-        const monthNo = parseInt(row['Month No.'])||0;
-        if(!gcode || !mcode || !monthNo) return;
+        const rawMonth = row['Month No.'];
+        const monthNo = parseInt(rawMonth) || 0;
+        if(!gcode && !mcode && (rawMonth==='' || rawMonth==null)) return; // fully blank row
+        if(!gcode || !mcode){ entrySkips.push({row:excelRow, reason:'missing Group ID or Member ID'}); return; }
+        if(!monthNo){ entrySkips.push({row:excelRow, reason:`Month No. is missing or not a number (got "${rawMonth}")`}); return; }
         const groupId = groupIdMap[gcode];
         const memberId = memberIdMap[mcode];
-        if(!groupId || !memberId){ skippedEntries++; return; }
+        if(!groupId){ entrySkips.push({row:excelRow, reason:`Group ID "${gcode}" not found in Groups sheet`}); return; }
+        if(!memberId){ entrySkips.push({row:excelRow, reason:`Member ID "${mcode}" not found in Members sheet`}); return; }
         const tookPayoutRaw = String(row['Took Payout (Y/N)']||'').trim().toUpperCase();
         newEntries.push({
           id: uid(), groupId, memberId, monthNo,
@@ -541,8 +548,19 @@ function importExcel(event){
       }
       saveState();
       renderAll();
+      const totalSkipped = memberSkips.length + entrySkips.length;
       let msg = `Imported ${newGroups.length} group(s), ${newMembers.length} member(s), ${newEntries.length} entries.`;
-      if(skippedMembers || skippedEntries) msg += ` ${skippedMembers+skippedEntries} row(s) skipped — check Group ID/Member ID codes match between sheets.`;
+      if(totalSkipped){
+        msg += ` ${totalSkipped} row(s) skipped:`;
+        const allSkips = [...memberSkips.map(s=>`Members row ${s.row}: ${s.reason}`), ...entrySkips.map(s=>`Entries row ${s.row}: ${s.reason}`)];
+        const shown = allSkips.slice(0, 12);
+        msg += '\n' + shown.map(s=>'• '+s).join('\n');
+        if(allSkips.length > shown.length) msg += `\n…and ${allSkips.length - shown.length} more.`;
+      }
+      statusEl.style.whiteSpace = 'pre-line';
+      statusEl.style.fontFamily = 'monospace';
+      statusEl.style.fontSize = '0.72rem';
+      statusEl.style.lineHeight = '1.5';
       statusEl.textContent = msg;
       toast('Excel import complete');
     }catch(err){
