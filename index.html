@@ -902,7 +902,7 @@ function renderRecentEntries(){
     return;
   }
 
-  const CAP = 40;
+  const CAP = 200;
   const toShow = entryListExpanded ? filtered : filtered.slice(0, CAP);
   showMoreBtn.style.display = (!entryListExpanded && filtered.length > CAP) ? 'block' : 'none';
   showMoreBtn.textContent = `Show all ${filtered.length} entries`;
