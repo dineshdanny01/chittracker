@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Chit Fund Tracker</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
   :root{
     --ink:#1f2a24;
@@ -150,6 +151,7 @@
   .tablewrap{overflow-x:auto;}
   .gain{color:var(--gain);font-weight:700;}
   .loss{color:var(--loss);font-weight:700;}
+  .payout-row td{background:#f4e6cf;font-weight:700;color:var(--brass-dark);}
   .tag-yes{color:var(--gain);font-weight:700;}
   .tag-no{color:var(--brass-dark);}
   .stat{
@@ -243,6 +245,13 @@
       <input type="file" id="importFile" accept=".json" style="display:none;" onchange="importData(event)">
     </div>
     <div class="card">
+      <h2>Import from Excel</h2>
+      <div class="meta" style="margin-bottom:10px;">Fill in the Chit Fund Data Import Template (Groups / Members / Entries sheets), then upload it here to bulk-load your old data.</div>
+      <button class="btn-ghost" style="width:100%;" onclick="document.getElementById('importExcelFile').click()">Choose Excel File (.xlsx)</button>
+      <input type="file" id="importExcelFile" accept=".xlsx,.xls" style="display:none;" onchange="importExcel(event)">
+      <div id="excelImportStatus" class="meta" style="margin-top:8px;"></div>
+    </div>
+    <div class="card">
       <h2>Your Groups</h2>
       <div id="groupsList"><div class="empty">No groups yet — add one above.</div></div>
     </div>
@@ -268,6 +277,19 @@
     </div>
   </div>
 
+  <!-- MEMBER HISTORY -->
+  <div class="screen" id="screen-history">
+    <div class="card">
+      <button class="btn-ghost" onclick="closeHistory()">‹ Back</button>
+      <h2 id="historyTitle" style="margin-top:10px;">Member History</h2>
+      <div id="historySummary"></div>
+    </div>
+    <div class="card">
+      <h2>Month-by-Month</h2>
+      <div class="tablewrap"><table id="historyTable"></table></div>
+    </div>
+  </div>
+
   <!-- LOG -->
   <div class="screen" id="screen-log">
     <div class="card">
@@ -275,9 +297,9 @@
       <label>Group</label>
       <select id="l-group" onchange="onLogGroupChange()"></select>
       <label>Member</label>
-      <select id="l-member"></select>
+      <select id="l-member" onchange="onLogMemberChange()"></select>
       <div class="row2">
-        <div><label>Month No. (this member's own count)</label><input id="l-monthno" type="number" min="1" value="1"></div>
+        <div><label>Month No. (this member's own count)</label><input id="l-monthno" type="number" min="1" value="1" oninput="onLogMonthChange()"></div>
         <div><label>Calendar month</label><input id="l-calmonth" placeholder="e.g. Jul 2026"></div>
       </div>
       <div class="row2">
@@ -412,6 +434,116 @@ function importData(event){
   event.target.value = '';
 }
 
+function importExcel(event){
+  const file = event.target.files[0];
+  if(!file) return;
+  const statusEl = document.getElementById('excelImportStatus');
+  statusEl.textContent = 'Reading file…';
+  const reader = new FileReader();
+  reader.onload = function(e){
+    try{
+      const data = new Uint8Array(e.target.result);
+      const workbook = XLSX.read(data, {type:'array'});
+      const groupsSheet = workbook.Sheets['Groups'];
+      const membersSheet = workbook.Sheets['Members'];
+      const entriesSheet = workbook.Sheets['Entries'];
+      if(!groupsSheet || !membersSheet || !entriesSheet){
+        statusEl.textContent = '';
+        toast('Missing Groups/Members/Entries sheets — use the template file.');
+        return;
+      }
+      const groupRows = XLSX.utils.sheet_to_json(groupsSheet, {defval:''});
+      const memberRows = XLSX.utils.sheet_to_json(membersSheet, {defval:''});
+      const entryRows = XLSX.utils.sheet_to_json(entriesSheet, {defval:''});
+
+      const groupIdMap = {};
+      const newGroups = [];
+      groupRows.forEach(row=>{
+        const code = String(row['Group ID']||'').trim();
+        const name = String(row['Group Name']||'').trim();
+        if(!code || !name) return;
+        const id = uid();
+        groupIdMap[code] = id;
+        newGroups.push({
+          id, name,
+          basePot: parseFloat(row['Base Pot'])||0,
+          months: parseInt(row['Total Months'])||11,
+          before: parseFloat(row['Before Rate'])||0,
+          after: parseFloat(row['After Rate'])||0,
+        });
+      });
+
+      const memberIdMap = {};
+      const newMembers = [];
+      let skippedMembers = 0;
+      memberRows.forEach(row=>{
+        const code = String(row['Member ID']||'').trim();
+        const gcode = String(row['Group ID']||'').trim();
+        const name = String(row['Member Name']||'').trim();
+        if(!code || !name) return;
+        const groupId = groupIdMap[gcode];
+        if(!groupId){ skippedMembers++; return; }
+        const id = uid();
+        memberIdMap[code] = id;
+        newMembers.push({ id, groupId, name, joinMonth: String(row['Join Month']||'').trim() });
+      });
+
+      const newEntries = [];
+      let skippedEntries = 0;
+      entryRows.forEach(row=>{
+        const gcode = String(row['Group ID']||'').trim();
+        const mcode = String(row['Member ID']||'').trim();
+        const monthNo = parseInt(row['Month No.'])||0;
+        if(!gcode || !mcode || !monthNo) return;
+        const groupId = groupIdMap[gcode];
+        const memberId = memberIdMap[mcode];
+        if(!groupId || !memberId){ skippedEntries++; return; }
+        const tookPayoutRaw = String(row['Took Payout (Y/N)']||'').trim().toUpperCase();
+        newEntries.push({
+          id: uid(), groupId, memberId, monthNo,
+          calendarMonth: String(row['Calendar Month']||'').trim(),
+          amountDue: parseFloat(row['Amount Due'])||0,
+          amountPaid: parseFloat(row['Amount Paid'])||0,
+          tookPayout: tookPayoutRaw === 'Y',
+          payoutAmount: parseFloat(row['Payout Amount'])||0,
+          notes: String(row['Notes']||'').trim(),
+          ts: Date.now(),
+        });
+      });
+
+      if(!newGroups.length){
+        statusEl.textContent = '';
+        toast('No valid groups found — check the Groups sheet has Group ID + Group Name filled in.');
+        return;
+      }
+
+      const replace = STATE.groups.length
+        ? confirm(`Found ${newGroups.length} group(s), ${newMembers.length} member(s), ${newEntries.length} entries.\n\nOK = REPLACE all current app data with this import.\nCancel = ADD this alongside your existing data.`)
+        : true;
+
+      if(replace){
+        STATE = { groups:newGroups, members:newMembers, entries:newEntries };
+      } else {
+        STATE.groups.push(...newGroups);
+        STATE.members.push(...newMembers);
+        STATE.entries.push(...newEntries);
+      }
+      saveState();
+      renderAll();
+      let msg = `Imported ${newGroups.length} group(s), ${newMembers.length} member(s), ${newEntries.length} entries.`;
+      if(skippedMembers || skippedEntries) msg += ` ${skippedMembers+skippedEntries} row(s) skipped — check Group ID/Member ID codes match between sheets.`;
+      statusEl.textContent = msg;
+      toast('Excel import complete');
+    }catch(err){
+      console.error(err);
+      statusEl.textContent = '';
+      toast('Could not read that Excel file — make sure it\'s the template format.');
+    }
+  };
+  reader.readAsArrayBuffer(file);
+  event.target.value = '';
+}
+
 function createGroup(){
   const name = document.getElementById('g-name').value.trim();
   if(!name){ toast('Enter a group name'); return; }
@@ -486,6 +618,63 @@ function addMember(){
   renderAll();
 }
 
+// ---------- Member schedule helpers ----------
+function getMemberEntries(memberId){
+  return STATE.entries.filter(e=>e.memberId===memberId);
+}
+function getMemberNextMonth(memberId){
+  const entries = getMemberEntries(memberId);
+  if(!entries.length) return 1;
+  return Math.max(...entries.map(e=>e.monthNo)) + 1;
+}
+function getPayoutMonth(memberId){
+  const entries = getMemberEntries(memberId);
+  const p = entries.find(e=>e.tookPayout);
+  return p ? p.monthNo : null;
+}
+// Builds a full month-by-month row set for a member: due/paid/status for every
+// month from 1 to the group's total months (or further if they've logged beyond it).
+function computeMemberSchedule(member, group){
+  const entries = getMemberEntries(member.id);
+  const maxLogged = entries.reduce((mx,e)=>Math.max(mx,e.monthNo),0);
+  const totalMonths = Math.max(group ? (group.months||0) : 0, maxLogged);
+  const payoutEntry = entries.find(e=>e.tookPayout);
+  const takenMonth = payoutEntry ? payoutEntry.monthNo : null;
+  const rows = [];
+  for(let m=1; m<=totalMonths; m++){
+    const logged = entries.find(e=>e.monthNo===m);
+    let dueRate;
+    if(takenMonth){ dueRate = (m<=takenMonth) ? (group?group.before:0) : (group?group.after:0); }
+    else { dueRate = group ? group.before : 0; }
+    const due = logged ? logged.amountDue : dueRate;
+    const paid = logged ? logged.amountPaid : 0;
+    let status;
+    if(!logged) status = 'Pending';
+    else if(paid >= due && due > 0) status = 'Paid';
+    else if(paid > 0) status = 'Partial';
+    else status = 'Unpaid';
+    rows.push({
+      month: m, due, paid, status, logged: !!logged,
+      isPayout: !!(logged && logged.tookPayout),
+      payoutAmount: logged ? (logged.payoutAmount || 0) : 0
+    });
+  }
+  return rows;
+}
+function getMemberStats(member, group){
+  const rows = computeMemberSchedule(member, group);
+  let paidSum=0, outstanding=0, loggedCount=0, payoutAmount=0, takenMonth=null;
+  rows.forEach(r=>{
+    if(r.logged){ paidSum += r.paid; outstanding += Math.max(r.due - r.paid, 0); loggedCount++; }
+    if(r.isPayout){ payoutAmount = r.payoutAmount; takenMonth = r.month; }
+  });
+  const totalMonths = group ? (group.months||0) : 0;
+  const remaining = Math.max(totalMonths - loggedCount, 0);
+  const took = takenMonth !== null;
+  const net = took ? payoutAmount - paidSum : null;
+  return { rows, paidSum, outstanding, loggedCount, remaining, took, takenMonth, payoutAmount, net };
+}
+
 function deleteMember(id){
   if(!confirm('Remove this member and their log entries?')) return;
   STATE.members = STATE.members.filter(m=>m.id!==id);
@@ -498,15 +687,69 @@ function renderMembersList(){
   const el = document.getElementById('membersList');
   const gid = selectedGroupId.members;
   if(!gid){ el.innerHTML = '<div class="empty">Select or create a group first.</div>'; return; }
+  const group = STATE.groups.find(g=>g.id===gid);
   const members = STATE.members.filter(m=>m.groupId===gid);
   if(!members.length){ el.innerHTML = '<div class="empty">No members in this group yet.</div>'; return; }
-  el.innerHTML = members.map(m=>`<div class="list-item">
-    <div>
-      <div><strong>${escapeHtml(m.name)}</strong></div>
-      <div class="meta">Joined: ${escapeHtml(m.joinMonth || '—')}</div>
-    </div>
-    <button class="btn-danger" onclick="deleteMember('${m.id}')">Remove</button>
-  </div>`).join('');
+  el.innerHTML = members.map(m=>{
+    const s = getMemberStats(m, group);
+    return `<div class="list-item">
+      <div style="cursor:pointer;flex:1;" onclick="openMemberHistory('${m.id}')">
+        <div><strong>${escapeHtml(m.name)}</strong> ${s.took?'<span class="tag-yes">· took payout</span>':''}</div>
+        <div class="meta">Joined: ${escapeHtml(m.joinMonth || '—')} · Due: <strong class="${s.outstanding>0?'loss':''}">₹${s.outstanding.toLocaleString('en-IN')}</strong> · ${s.remaining} month(s) left · tap to view full history</div>
+      </div>
+      <button class="btn-danger" onclick="event.stopPropagation();deleteMember('${m.id}')">Remove</button>
+    </div>`;
+  }).join('');
+}
+
+// ---------- Member History screen ----------
+let historyMemberId = null;
+let historyReturnTab = 'members';
+
+function openMemberHistory(memberId){
+  historyMemberId = memberId;
+  const activeTab = document.querySelector('.tab.active');
+  if(activeTab) historyReturnTab = activeTab.dataset.screen;
+  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+  document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
+  document.getElementById('screen-history').classList.add('active');
+  renderHistory();
+}
+
+function closeHistory(){
+  document.getElementById('screen-history').classList.remove('active');
+  const tab = document.querySelector(`.tab[data-screen="${historyReturnTab}"]`) || document.querySelector('.tab[data-screen="members"]');
+  tab.classList.add('active');
+  document.getElementById('screen-'+tab.dataset.screen).classList.add('active');
+  renderAll();
+}
+
+function renderHistory(){
+  const member = STATE.members.find(m=>m.id===historyMemberId);
+  if(!member){ closeHistory(); return; }
+  const group = STATE.groups.find(g=>g.id===member.groupId);
+  document.getElementById('historyTitle').textContent = member.name;
+  const s = getMemberStats(member, group);
+  document.getElementById('historySummary').innerHTML = `
+    <div class="stat"><span>Chit group</span><span class="val">${escapeHtml(group?group.name:'—')}</span></div>
+    <div class="stat"><span>Total paid so far</span><span class="val">₹${s.paidSum.toLocaleString('en-IN')}</span></div>
+    <div class="stat"><span>Outstanding (unpaid on logged months)</span><span class="val ${s.outstanding>0?'loss':'gain'}">₹${s.outstanding.toLocaleString('en-IN')}</span></div>
+    <div class="stat"><span>Months logged / remaining</span><span class="val">${s.loggedCount} / ${s.remaining}</span></div>
+    <div class="stat"><span>Payout</span><span class="val ${s.took?'gain':''}">${s.took ? 'Month '+s.takenMonth+' · ₹'+s.payoutAmount.toLocaleString('en-IN') : 'Not taken yet'}</span></div>
+    ${s.took ? `<div class="stat"><span>Net position</span><span class="val ${s.net>=0?'gain':'loss'}">${s.net>=0?'+':''}₹${s.net.toLocaleString('en-IN')}</span></div>` : ''}
+  `;
+  const table = document.getElementById('historyTable');
+  table.innerHTML = '<tr><th>Month</th><th>Due</th><th>Paid</th><th>Status</th><th>Payout</th></tr>' +
+    s.rows.map(r=>{
+      const statusClass = r.status==='Paid' ? 'tag-yes' : (r.status==='Unpaid'||r.status==='Partial' ? 'loss' : '');
+      return `<tr class="${r.isPayout?'payout-row':''}">
+        <td>${r.month}</td>
+        <td>₹${r.due.toLocaleString('en-IN')}</td>
+        <td>${r.logged ? '₹'+r.paid.toLocaleString('en-IN') : '—'}</td>
+        <td class="${statusClass}">${r.status}</td>
+        <td>${r.isPayout ? '₹'+r.payoutAmount.toLocaleString('en-IN') : '—'}</td>
+      </tr>`;
+    }).join('');
 }
 
 // ---------- Log ----------
@@ -520,21 +763,58 @@ function renderLogGroupSelect(){
 
 function onLogGroupChange(){
   const gid = document.getElementById('l-group').value;
-  const group = STATE.groups.find(g=>g.id===gid);
   const memberSel = document.getElementById('l-member');
+  const prevMember = memberSel.value;
   const members = STATE.members.filter(m=>m.groupId===gid);
   memberSel.innerHTML = members.length
     ? members.map(m=>`<option value="${m.id}">${escapeHtml(m.name)}</option>`).join('')
     : '<option value="">No members in this group</option>';
-  if(group){
-    document.getElementById('l-due').value = group.before;
-    document.getElementById('l-paid').value = group.before;
-  }
+  if(prevMember && members.find(m=>m.id===prevMember)) memberSel.value = prevMember;
+  onLogMemberChange();
+}
+
+function onLogMemberChange(){
+  const groupId = document.getElementById('l-group').value;
+  const memberId = document.getElementById('l-member').value;
+  const group = STATE.groups.find(g=>g.id===groupId);
+  if(!group){ return; }
+  const nextMonth = memberId ? getMemberNextMonth(memberId) : 1;
+  document.getElementById('l-monthno').value = nextMonth;
+  applyAutoRates(memberId, group, nextMonth);
+}
+
+function onLogMonthChange(){
+  const groupId = document.getElementById('l-group').value;
+  const memberId = document.getElementById('l-member').value;
+  const group = STATE.groups.find(g=>g.id===groupId);
+  const monthNo = parseInt(document.getElementById('l-monthno').value) || 1;
+  if(!group) return;
+  applyAutoRates(memberId, group, monthNo);
+}
+
+// Auto-fills the due/paid installment (before vs after rate, based on whether the
+// member has already taken their payout in an earlier month) and suggests the
+// correct pot amount if this turns out to be their payout month.
+function applyAutoRates(memberId, group, monthNo){
+  const takenMonth = memberId ? getPayoutMonth(memberId) : null;
+  const rate = (takenMonth && monthNo > takenMonth) ? group.after : group.before;
+  document.getElementById('l-due').value = rate;
+  document.getElementById('l-paid').value = rate;
+  const suggestion = group.basePot + (group.after - group.before) * (monthNo - 1);
+  document.getElementById('l-payoutamt').value = suggestion;
 }
 
 function togglePayoutFields(){
   const checked = document.getElementById('l-payout').checked;
   document.getElementById('payoutFields').style.display = checked ? 'block' : 'none';
+  if(checked){
+    const groupId = document.getElementById('l-group').value;
+    const group = STATE.groups.find(g=>g.id===groupId);
+    const monthNo = parseInt(document.getElementById('l-monthno').value) || 1;
+    if(group){
+      document.getElementById('l-payoutamt').value = group.basePot + (group.after - group.before) * (monthNo - 1);
+    }
+  }
 }
 
 function addEntry(){
@@ -554,12 +834,11 @@ function addEntry(){
     ts: Date.now(),
   };
   STATE.entries.push(entry);
-  document.getElementById('l-monthno').value = (entry.monthNo + 1);
   document.getElementById('l-calmonth').value = '';
   document.getElementById('l-payout').checked = false;
-  document.getElementById('l-payoutamt').value = '';
   document.getElementById('l-notes').value = '';
   togglePayoutFields();
+  onLogMemberChange();
   saveState();
   toast('Entry saved');
   renderAll();
@@ -599,6 +878,7 @@ function renderOverview(){
     summaryCard.style.display='none'; tableCard.style.display='none'; emptyCard.style.display='block';
     return;
   }
+  const group = STATE.groups.find(g=>g.id===gid);
   const members = STATE.members.filter(m=>m.groupId===gid);
   if(!members.length){
     summaryCard.style.display='none'; tableCard.style.display='none';
@@ -610,39 +890,36 @@ function renderOverview(){
   summaryCard.style.display='block';
   tableCard.style.display='block';
 
-  const groupEntries = STATE.entries.filter(e=>e.groupId===gid);
-  let totalCollected = 0, totalPaidOut = 0, takenCount = 0;
-
+  let totalCollected = 0, totalPaidOut = 0, takenCount = 0, totalOutstanding = 0;
   const rows = members.map(m=>{
-    const mine = groupEntries.filter(e=>e.memberId===m.id);
-    const totalPaid = mine.reduce((s,e)=>s+e.amountPaid,0);
-    const payoutEntry = mine.find(e=>e.tookPayout);
-    totalCollected += totalPaid;
-    if(payoutEntry){ totalPaidOut += payoutEntry.payoutAmount; takenCount++; }
-    const net = (payoutEntry?payoutEntry.payoutAmount:0) - totalPaid;
-    return { name:m.name, monthsLogged: mine.length, totalPaid,
-      took: !!payoutEntry, monthTaken: payoutEntry?payoutEntry.monthNo:'—',
-      payoutAmount: payoutEntry?payoutEntry.payoutAmount:0, net };
+    const s = getMemberStats(m, group);
+    totalCollected += s.paidSum;
+    totalOutstanding += s.outstanding;
+    if(s.took){ totalPaidOut += s.payoutAmount; takenCount++; }
+    return { id:m.id, name:m.name, totalPaid:s.paidSum, outstanding:s.outstanding,
+      took:s.took, monthTaken:s.took?s.takenMonth:'—', payoutAmount:s.payoutAmount, net:s.net };
   });
 
   document.getElementById('overviewSummary').innerHTML = `
     <div class="stat"><span>Total collected so far</span><span class="val">₹${totalCollected.toLocaleString('en-IN')}</span></div>
     <div class="stat"><span>Total paid out</span><span class="val">₹${totalPaidOut.toLocaleString('en-IN')}</span></div>
     <div class="stat"><span>In hand / balance</span><span class="val ${(totalCollected-totalPaidOut)>=0?'gain':'loss'}">₹${(totalCollected-totalPaidOut).toLocaleString('en-IN')}</span></div>
+    <div class="stat"><span>Outstanding (unpaid dues)</span><span class="val ${totalOutstanding>0?'loss':'gain'}">₹${totalOutstanding.toLocaleString('en-IN')}</span></div>
     <div class="stat"><span>Taken payout</span><span class="val">${takenCount} of ${members.length}</span></div>
     <div class="stat"><span>Still waiting</span><span class="val">${members.length-takenCount}</span></div>
   `;
 
   const table = document.getElementById('overviewTable');
-  table.innerHTML = `<tr><th>Member</th><th>Paid</th><th>Taken?</th><th>Month</th><th>Payout</th><th>Net</th></tr>` +
-    rows.map(r=>`<tr>
+  table.innerHTML = `<tr><th>Member</th><th>Paid</th><th>Due</th><th>Taken?</th><th>Month</th><th>Net</th></tr>` +
+    rows.map(r=>`<tr style="cursor:pointer;" onclick="openMemberHistory('${r.id}')">
       <td>${escapeHtml(r.name)}</td>
       <td>₹${r.totalPaid.toLocaleString('en-IN')}</td>
+      <td class="${r.outstanding>0?'loss':''}">₹${r.outstanding.toLocaleString('en-IN')}</td>
       <td class="${r.took?'tag-yes':'tag-no'}">${r.took?'Yes':'No'}</td>
       <td>${r.monthTaken}</td>
-      <td>${r.took?'₹'+r.payoutAmount.toLocaleString('en-IN'):'—'}</td>
-      <td class="${r.net>=0?'gain':'loss'}">${r.took ? (r.net>=0?'+':'')+'₹'+r.net.toLocaleString('en-IN') : '—'}</td>
-    </tr>`).join('');
+      <td class="${r.net!==null&&r.net>=0?'gain':(r.net!==null?'loss':'')}">${r.took ? (r.net>=0?'+':'')+'₹'+r.net.toLocaleString('en-IN') : '—'}</td>
+    </tr>`).join('') +
+    `<tr><td colspan="6" style="text-align:center;color:#948a78;font-size:0.7rem;padding-top:8px;border-bottom:none;">tap a row to see that member's full month-by-month history</td></tr>`;
 }
 
 // ---------- Business (all groups) ----------
