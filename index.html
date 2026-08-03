@@ -452,6 +452,43 @@ function importData(event){
   event.target.value = '';
 }
 
+// Turns a Calendar Month value — a real Excel date, or text typed as "Jul-25",
+// "Jul 2026", "July 2026", "2026-07", etc. — into one consistent "Jul 2026" style
+// string, so entries group together correctly no matter how it was entered.
+const MONTH_NAMES = ['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'];
+function normalizeCalendarMonth(raw){
+  if(raw===null || raw===undefined || raw==='') return '';
+  if(raw instanceof Date && !isNaN(raw)){
+    return raw.toLocaleString('en-US', {month:'short', year:'numeric'});
+  }
+  if(typeof raw === 'number' && isFinite(raw)){
+    // Excel serial date fallback (days since 1899-12-30), in case cellDates wasn't applied
+    const d = new Date(Math.round((raw - 25569) * 86400 * 1000));
+    if(!isNaN(d)) return d.toLocaleString('en-US', {month:'short', year:'numeric'});
+  }
+  const str = String(raw).trim();
+  if(!str) return '';
+  // "Jul-25", "Jul 25", "Jul/25", "July 2026", "Jul,2026" etc — parsed manually
+  // because native Date parsing misreads a 2-digit trailing number as a day, not a year.
+  const m = str.match(/^([A-Za-z]{3,9})[\s\-\/,]*'?(\d{2}|\d{4})$/);
+  if(m){
+    const mi = MONTH_NAMES.indexOf(m[1].slice(0,3).toLowerCase());
+    if(mi !== -1){
+      let year = m[2];
+      if(year.length===2) year = (parseInt(year) <= 69 ? '20' : '19') + year;
+      return MONTH_NAMES[mi][0].toUpperCase()+MONTH_NAMES[mi].slice(1) + ' ' + year;
+    }
+  }
+  // "2026-07" or "2026/07" (ISO year-month)
+  const iso = str.match(/^(\d{4})[\-\/](\d{1,2})$/);
+  if(iso){
+    const mi = parseInt(iso[2]) - 1;
+    if(mi>=0 && mi<12) return MONTH_NAMES[mi][0].toUpperCase()+MONTH_NAMES[mi].slice(1) + ' ' + iso[1];
+  }
+  // Unrecognised format — keep as typed. Still groups consistently if repeated identically.
+  return str;
+}
+
 function importExcel(event){
   const file = event.target.files[0];
   if(!file) return;
@@ -461,7 +498,7 @@ function importExcel(event){
   reader.onload = function(e){
     try{
       const data = new Uint8Array(e.target.result);
-      const workbook = XLSX.read(data, {type:'array'});
+      const workbook = XLSX.read(data, {type:'array', cellDates:true});
       const groupsSheet = workbook.Sheets['Groups'];
       const membersSheet = workbook.Sheets['Members'];
       const entriesSheet = workbook.Sheets['Entries'];
@@ -529,7 +566,7 @@ function importExcel(event){
         const tookPayoutRaw = String(row['Took Payout (Y/N)']||'').trim().toUpperCase();
         newEntries.push({
           id: uid(), groupId, memberId, monthNo,
-          calendarMonth: String(row['Calendar Month']||'').trim(),
+          calendarMonth: normalizeCalendarMonth(row['Calendar Month']),
           amountDue: parseFloat(row['Amount Due'])||0,
           amountPaid: parseFloat(row['Amount Paid'])||0,
           tookPayout: tookPayoutRaw === 'Y',
@@ -895,7 +932,7 @@ function addEntry(){
     id: uid(),
     groupId, memberId,
     monthNo: parseInt(document.getElementById('l-monthno').value) || 1,
-    calendarMonth: document.getElementById('l-calmonth').value.trim(),
+    calendarMonth: normalizeCalendarMonth(document.getElementById('l-calmonth').value.trim()),
     amountDue: parseFloat(document.getElementById('l-due').value) || 0,
     amountPaid: parseFloat(document.getElementById('l-paid').value) || 0,
     tookPayout: document.getElementById('l-payout').checked,
