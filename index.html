@@ -695,16 +695,17 @@ function computeMemberSchedule(member, group){
 }
 function getMemberStats(member, group){
   const rows = computeMemberSchedule(member, group);
-  let paidSum=0, outstanding=0, loggedCount=0, payoutAmount=0, takenMonth=null;
+  let paidSum=0, outstanding=0, loggedCount=0, payoutAmount=0, takenMonth=null, expectedFuture=0;
   rows.forEach(r=>{
     if(r.logged){ paidSum += r.paid; outstanding += Math.max(r.due - r.paid, 0); loggedCount++; }
+    else { expectedFuture += r.due; }
     if(r.isPayout){ payoutAmount = r.payoutAmount; takenMonth = r.month; }
   });
   const totalMonths = group ? (group.months||0) : 0;
   const remaining = Math.max(totalMonths - loggedCount, 0);
   const took = takenMonth !== null;
   const net = took ? payoutAmount - paidSum : null;
-  return { rows, paidSum, outstanding, loggedCount, remaining, took, takenMonth, payoutAmount, net };
+  return { rows, paidSum, outstanding, loggedCount, remaining, took, takenMonth, payoutAmount, net, expectedFuture };
 }
 
 function deleteMember(id){
@@ -766,9 +767,12 @@ function renderHistory(){
     <div class="stat"><span>Chit group</span><span class="val">${escapeHtml(group?group.name:'—')}</span></div>
     <div class="stat"><span>Total paid so far</span><span class="val">₹${s.paidSum.toLocaleString('en-IN')}</span></div>
     <div class="stat"><span>Outstanding (unpaid on logged months)</span><span class="val ${s.outstanding>0?'loss':'gain'}">₹${s.outstanding.toLocaleString('en-IN')}</span></div>
+    <div class="stat"><span>Expected to collect (pending months)</span><span class="val">₹${s.expectedFuture.toLocaleString('en-IN')}</span></div>
     <div class="stat"><span>Months logged / remaining</span><span class="val">${s.loggedCount} / ${s.remaining}</span></div>
     <div class="stat"><span>Payout</span><span class="val ${s.took?'gain':''}">${s.took ? 'Month '+s.takenMonth+' · ₹'+s.payoutAmount.toLocaleString('en-IN') : 'Not taken yet'}</span></div>
     ${s.took ? `<div class="stat"><span>Net position</span><span class="val ${s.net>=0?'gain':'loss'}">${s.net>=0?'+':''}₹${s.net.toLocaleString('en-IN')}</span></div>` : ''}
+    ${s.took ? `<div class="meta" style="margin-top:6px;">Net position = payout received (₹${s.payoutAmount.toLocaleString('en-IN')}) minus what has actually been paid so far (₹${s.paidSum.toLocaleString('en-IN')}). ${s.net>=0?'Positive means they have received more than they have paid in so far — normal for someone who took an early payout, since they still owe the higher installment for the remaining months.':'Negative means they have already paid in more than they received — normal for someone who took a late payout.'}</div>` : ''}
+    ${!s.took ? `<button class="btn-primary" style="margin-top:12px;" onclick="goToLogEntryForPayout('${group?group.id:''}','${member.id}')">Log Payout for ${escapeHtml(member.name)}</button>` : ''}
   `;
   const table = document.getElementById('historyTable');
   table.innerHTML = '<tr><th>Month</th><th>Due</th><th>Paid</th><th>Status</th><th>Payout</th></tr>' +
@@ -968,11 +972,12 @@ function renderOverview(){
   summaryCard.style.display='block';
   tableCard.style.display='block';
 
-  let totalCollected = 0, totalPaidOut = 0, takenCount = 0, totalOutstanding = 0;
+  let totalCollected = 0, totalPaidOut = 0, takenCount = 0, totalOutstanding = 0, totalExpected = 0;
   const rows = members.map(m=>{
     const s = getMemberStats(m, group);
     totalCollected += s.paidSum;
     totalOutstanding += s.outstanding;
+    totalExpected += s.expectedFuture;
     if(s.took){ totalPaidOut += s.payoutAmount; takenCount++; }
     return { id:m.id, name:m.name, totalPaid:s.paidSum, outstanding:s.outstanding,
       took:s.took, monthTaken:s.took?s.takenMonth:'—', payoutAmount:s.payoutAmount, net:s.net };
@@ -982,7 +987,8 @@ function renderOverview(){
     <div class="stat"><span>Total collected so far</span><span class="val">₹${totalCollected.toLocaleString('en-IN')}</span></div>
     <div class="stat"><span>Total paid out</span><span class="val">₹${totalPaidOut.toLocaleString('en-IN')}</span></div>
     <div class="stat"><span>In hand / balance</span><span class="val ${(totalCollected-totalPaidOut)>=0?'gain':'loss'}">₹${(totalCollected-totalPaidOut).toLocaleString('en-IN')}</span></div>
-    <div class="stat"><span>Outstanding (unpaid dues)</span><span class="val ${totalOutstanding>0?'loss':'gain'}">₹${totalOutstanding.toLocaleString('en-IN')}</span></div>
+    <div class="stat"><span>Outstanding (unpaid, already logged)</span><span class="val ${totalOutstanding>0?'loss':'gain'}">₹${totalOutstanding.toLocaleString('en-IN')}</span></div>
+    <div class="stat"><span>Expected to collect (pending months not yet logged)</span><span class="val">₹${totalExpected.toLocaleString('en-IN')}</span></div>
     <div class="stat"><span>Taken payout</span><span class="val">${takenCount} of ${members.length}</span></div>
     <div class="stat"><span>Still waiting</span><span class="val">${members.length-takenCount}</span></div>
   `;
@@ -1016,24 +1022,23 @@ function renderBusiness(){
   summaryCard.style.display='block';
   tableCard.style.display='block';
 
-  let grandCollected = 0, grandPaidOut = 0, grandMembers = 0, grandTaken = 0;
+  let grandCollected = 0, grandPaidOut = 0, grandMembers = 0, grandTaken = 0, grandExpected = 0;
   const pendingList = [];
   const groupRows = STATE.groups.map(g=>{
     const members = STATE.members.filter(m=>m.groupId===g.id);
-    const entries = STATE.entries.filter(e=>e.groupId===g.id);
-    let collected = 0, paidOut = 0, taken = 0;
+    let collected = 0, paidOut = 0, taken = 0, expected = 0;
     members.forEach(m=>{
-      const mine = entries.filter(e=>e.memberId===m.id);
-      const paid = mine.reduce((s,e)=>s+e.amountPaid,0);
-      collected += paid;
-      const payoutEntry = mine.find(e=>e.tookPayout);
-      if(payoutEntry){ paidOut += payoutEntry.payoutAmount; taken++; }
-      else if(members.length){ pendingList.push({group: g.name, member: m.name, paid}); }
+      const s = getMemberStats(m, g);
+      collected += s.paidSum;
+      expected += s.expectedFuture;
+      if(s.took){ paidOut += s.payoutAmount; taken++; }
+      else { pendingList.push({groupId:g.id, groupName:g.name, memberId:m.id, memberName:m.name, paid:s.paidSum, suggestedPayout: g.basePot + (g.after-g.before)*(getMemberNextMonth(m.id)-1)}); }
     });
     grandCollected += collected;
     grandPaidOut += paidOut;
     grandMembers += members.length;
     grandTaken += taken;
+    grandExpected += expected;
     return { name: g.name, members: members.length, collected, paidOut, profit: collected-paidOut, taken };
   });
 
@@ -1044,14 +1049,21 @@ function renderBusiness(){
     <div class="stat"><span>Total collected (all groups)</span><span class="val">₹${grandCollected.toLocaleString('en-IN')}</span></div>
     <div class="stat"><span>Total paid out (all groups)</span><span class="val">₹${grandPaidOut.toLocaleString('en-IN')}</span></div>
     <div class="stat"><span>In hand across the business</span><span class="val ${grandProfit>=0?'gain':'loss'}">₹${grandProfit.toLocaleString('en-IN')}</span></div>
+    <div class="stat"><span>Expected to collect (pending months, all groups)</span><span class="val">₹${grandExpected.toLocaleString('en-IN')}</span></div>
     <div class="stat"><span>Payouts given</span><span class="val">${grandTaken} of ${grandMembers}</span></div>
   `;
 
   if(pendingList.length){
     pendingCard.style.display = 'block';
     document.getElementById('bizPending').innerHTML = pendingList.map(p=>
-      `<div class="list-item"><div><strong>${escapeHtml(p.member)}</strong><div class="meta">${escapeHtml(p.group)}</div></div><div class="meta">paid so far ₹${p.paid.toLocaleString('en-IN')}</div></div>`
-    ).join('');
+      `<div class="list-item" style="cursor:pointer;" onclick="goToLogEntryForPayout('${p.groupId}','${p.memberId}')">
+        <div>
+          <strong>${escapeHtml(p.memberName)}</strong>
+          <div class="meta">${escapeHtml(p.groupName)} · paid so far ₹${p.paid.toLocaleString('en-IN')}</div>
+        </div>
+        <div class="meta" style="text-align:right;">suggested payout<br><strong style="color:var(--teal);">₹${p.suggestedPayout.toLocaleString('en-IN')}</strong></div>
+      </div>`
+    ).join('') + `<div class="meta" style="text-align:center;padding-top:8px;">tap a member to jump straight to logging their payout</div>`;
   } else {
     pendingCard.style.display = 'none';
   }
@@ -1065,6 +1077,25 @@ function renderBusiness(){
       <td>₹${r.paidOut.toLocaleString('en-IN')}</td>
       <td class="${r.profit>=0?'gain':'loss'}">₹${r.profit.toLocaleString('en-IN')}</td>
     </tr>`).join('');
+}
+
+function goToLogEntryForPayout(groupId, memberId){
+  if(!groupId || !memberId) return;
+  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+  document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
+  const tab = document.querySelector('.tab[data-screen="log"]');
+  tab.classList.add('active');
+  document.getElementById('screen-log').classList.add('active');
+
+  const groupSel = document.getElementById('l-group');
+  groupSel.value = groupId;
+  onLogGroupChange();
+  const memberSel = document.getElementById('l-member');
+  memberSel.value = memberId;
+  onLogMemberChange();
+  document.getElementById('l-payout').checked = true;
+  togglePayoutFields();
+  toast('Ready — confirm the amount and save to log this payout');
 }
 
 function escapeHtml(s){
