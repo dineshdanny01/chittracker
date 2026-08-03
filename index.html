@@ -297,6 +297,24 @@
     </div>
   </div>
 
+  <!-- MONTH DETAIL (drill-down from Month-wise table) -->
+  <div class="screen" id="screen-month-detail">
+    <div class="card">
+      <button class="btn-ghost" onclick="closeMonthDetail()">‹ Back</button>
+      <h2 id="monthDetailTitle" style="margin-top:10px;">Month Detail</h2>
+      <div id="monthDetailSummary"></div>
+    </div>
+    <div class="card">
+      <h2>Paid This Month</h2>
+      <div class="tablewrap"><table id="monthDetailPaidTable"></table></div>
+    </div>
+    <div class="card" id="monthDetailMissingCard" style="display:none;">
+      <h2>Not Logged This Month</h2>
+      <div class="meta" style="margin-bottom:10px;">Members whose chit is still running but have no entry for this month yet — tap one to log it.</div>
+      <div id="monthDetailMissing"></div>
+    </div>
+  </div>
+
   <!-- LOG -->
   <div class="screen" id="screen-log">
     <div class="card">
@@ -1197,18 +1215,108 @@ function renderMonthWise(){
 
   const table = document.getElementById('bizMonthWiseTable');
   table.innerHTML = `<tr><th>Month</th><th>Due</th><th>Collected</th><th>Payout</th><th>Balance</th></tr>` +
-    keys.map(k=>{
+    keys.map((k,idx)=>{
       const d = byMonth[k];
       const balance = d.collected - d.payout;
       const isThisMonth = k.toLowerCase() === thisMonthLabel.toLowerCase();
-      return `<tr class="${isThisMonth?'payout-row':''}">
+      return `<tr class="${isThisMonth?'payout-row':''}" style="cursor:pointer;" data-month-idx="${idx}">
         <td>${escapeHtml(k)}${isThisMonth?' (this month)':''}</td>
         <td>₹${d.due.toLocaleString('en-IN')}</td>
         <td>₹${d.collected.toLocaleString('en-IN')}</td>
         <td>${d.payout ? '₹'+d.payout.toLocaleString('en-IN') : '—'}</td>
         <td class="${balance>=0?'gain':'loss'}">₹${balance.toLocaleString('en-IN')}</td>
       </tr>`;
-    }).join('');
+    }).join('') +
+    `<tr><td colspan="5" style="text-align:center;color:#948a78;font-size:0.7rem;padding-top:8px;border-bottom:none;">tap a month to see who paid and who didn't</td></tr>`;
+  table.querySelectorAll('tr[data-month-idx]').forEach(tr=>{
+    tr.addEventListener('click', ()=> openMonthDetail(keys[parseInt(tr.dataset.monthIdx, 10)]));
+  });
+}
+
+// ---------- Month Detail (who paid / who didn't for a given calendar month) ----------
+let monthDetailReturnTab = 'business';
+
+function openMonthDetail(monthKey){
+  const activeTab = document.querySelector('.tab.active');
+  if(activeTab) monthDetailReturnTab = activeTab.dataset.screen;
+  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+  document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
+  document.getElementById('screen-month-detail').classList.add('active');
+  renderMonthDetail(monthKey);
+}
+
+function closeMonthDetail(){
+  document.getElementById('screen-month-detail').classList.remove('active');
+  const tab = document.querySelector(`.tab[data-screen="${monthDetailReturnTab}"]`) || document.querySelector('.tab[data-screen="business"]');
+  tab.classList.add('active');
+  document.getElementById('screen-'+tab.dataset.screen).classList.add('active');
+  renderAll();
+}
+
+function renderMonthDetail(monthKey){
+  document.getElementById('monthDetailTitle').textContent = monthKey;
+
+  const entriesThisMonth = STATE.entries.filter(e => e.calendarMonth && e.calendarMonth.trim() === monthKey);
+  const paidMemberIds = new Set(entriesThisMonth.map(e=>e.memberId));
+
+  let due=0, collected=0, payout=0, fullyPaidCount=0, shortCount=0;
+  entriesThisMonth.forEach(e=>{
+    due += e.amountDue; collected += e.amountPaid;
+    if(e.tookPayout) payout += e.payoutAmount;
+    if(e.amountPaid >= e.amountDue) fullyPaidCount++; else shortCount++;
+  });
+
+  // Members whose chit is still running (haven't finished all months) but have
+  // no entry logged for this exact calendar month.
+  const missing = [];
+  STATE.members.forEach(m=>{
+    if(paidMemberIds.has(m.id)) return;
+    const group = STATE.groups.find(g=>g.id===m.groupId);
+    if(!group) return;
+    const s = getMemberStats(m, group);
+    if(s.remaining > 0){
+      missing.push({ memberId:m.id, groupId:group.id, name:m.name, groupName:group.name });
+    }
+  });
+
+  document.getElementById('monthDetailSummary').innerHTML = `
+    <div class="stat"><span>Entries logged this month</span><span class="val">${entriesThisMonth.length}</span></div>
+    <div class="stat"><span>Fully paid</span><span class="val gain">${fullyPaidCount}</span></div>
+    <div class="stat"><span>Short / unpaid</span><span class="val ${shortCount>0?'loss':''}">${shortCount}</span></div>
+    <div class="stat"><span>Due this month</span><span class="val">₹${due.toLocaleString('en-IN')}</span></div>
+    <div class="stat"><span>Collected this month</span><span class="val">₹${collected.toLocaleString('en-IN')}</span></div>
+    <div class="stat"><span>Payout given this month</span><span class="val">${payout ? '₹'+payout.toLocaleString('en-IN') : '—'}</span></div>
+    <div class="stat"><span>Not logged this month</span><span class="val ${missing.length>0?'loss':'gain'}">${missing.length}</span></div>
+  `;
+
+  const paidTable = document.getElementById('monthDetailPaidTable');
+  paidTable.innerHTML = `<tr><th>Member</th><th>Group</th><th>Due</th><th>Paid</th><th>Status</th></tr>` +
+    entriesThisMonth.map(e=>{
+      const member = STATE.members.find(m=>m.id===e.memberId);
+      const group = STATE.groups.find(g=>g.id===e.groupId);
+      const status = e.amountPaid >= e.amountDue ? 'Paid' : (e.amountPaid>0 ? 'Partial' : 'Unpaid');
+      const statusClass = status==='Paid' ? 'tag-yes' : 'loss';
+      return `<tr class="${e.tookPayout?'payout-row':''}">
+        <td>${escapeHtml(member?member.name:'—')}${e.tookPayout?' · payout':''}</td>
+        <td>${escapeHtml(group?group.name:'—')}</td>
+        <td>₹${e.amountDue.toLocaleString('en-IN')}</td>
+        <td>₹${e.amountPaid.toLocaleString('en-IN')}</td>
+        <td class="${statusClass}">${status}</td>
+      </tr>`;
+    }).join('') || `<tr><td colspan="5" style="text-align:center;color:#948a78;">No entries logged for this month.</td></tr>`;
+
+  const missingCard = document.getElementById('monthDetailMissingCard');
+  if(missing.length){
+    missingCard.style.display = 'block';
+    document.getElementById('monthDetailMissing').innerHTML = missing.map(mm =>
+      `<div class="list-item" style="cursor:pointer;" onclick="closeMonthDetail(); openMemberHistory('${mm.memberId}');">
+        <div><strong>${escapeHtml(mm.name)}</strong><div class="meta">${escapeHtml(mm.groupName)}</div></div>
+        <div class="meta">no entry this month</div>
+      </div>`
+    ).join('');
+  } else {
+    missingCard.style.display = 'none';
+  }
 }
 
 function goToLogEntryForPayout(groupId, memberId){
