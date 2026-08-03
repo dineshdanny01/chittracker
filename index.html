@@ -217,6 +217,11 @@
       <h2>By Group</h2>
       <div class="tablewrap"><table id="bizTable"></table></div>
     </div>
+    <div class="card" id="bizMonthWiseCard" style="display:none;">
+      <h2>Month-wise (all groups)</h2>
+      <div class="meta" style="margin-bottom:10px;">Based on the "Calendar Month" text you entered per log entry — use a consistent format (e.g. "Jul 2026") so months line up correctly.</div>
+      <div class="tablewrap"><table id="bizMonthWiseTable"></table></div>
+    </div>
   </div>
 
   <!-- GROUPS -->
@@ -269,6 +274,8 @@
       <input id="m-name" placeholder="e.g. Ravi Kumar">
       <label>Join month (their month 1)</label>
       <input id="m-joinmonth" placeholder="e.g. Jul 2026">
+      <label>Wants to take payout in month no. (optional)</label>
+      <input id="m-requestedmonth" type="number" min="1" placeholder="e.g. 7 — leave blank if not decided yet">
       <button class="btn-primary" onclick="addMember()">Add Member</button>
     </div>
     <div class="card">
@@ -642,11 +649,27 @@ function addMember(){
   const name = document.getElementById('m-name').value.trim();
   if(!name){ toast('Enter a member name'); return; }
   const joinMonth = document.getElementById('m-joinmonth').value.trim();
-  STATE.members.push({ id: uid(), groupId: gid, name, joinMonth });
+  const reqRaw = document.getElementById('m-requestedmonth').value;
+  const requestedMonth = reqRaw ? (parseInt(reqRaw)||null) : null;
+  STATE.members.push({ id: uid(), groupId: gid, name, joinMonth, requestedMonth });
   document.getElementById('m-name').value = '';
   document.getElementById('m-joinmonth').value = '';
+  document.getElementById('m-requestedmonth').value = '';
   saveState();
   toast('Member added');
+  renderAll();
+}
+
+function setRequestedMonth(memberId){
+  const member = STATE.members.find(m=>m.id===memberId);
+  if(!member) return;
+  const current = member.requestedMonth || '';
+  const input = prompt('Which month does this member want to take their payout in? (Leave blank to clear)', current);
+  if(input === null) return; // cancelled
+  const val = input.trim();
+  member.requestedMonth = val ? (parseInt(val)||null) : null;
+  saveState();
+  toast(member.requestedMonth ? `Set to month ${member.requestedMonth}` : 'Cleared');
   renderAll();
 }
 
@@ -716,6 +739,11 @@ function deleteMember(id){
   renderAll();
 }
 
+function suggestPayoutAmount(group, monthNo){
+  if(!group || !monthNo) return 0;
+  return group.basePot + (group.after - group.before) * (monthNo - 1);
+}
+
 function renderMembersList(){
   const el = document.getElementById('membersList');
   const gid = selectedGroupId.members;
@@ -725,10 +753,16 @@ function renderMembersList(){
   if(!members.length){ el.innerHTML = '<div class="empty">No members in this group yet.</div>'; return; }
   el.innerHTML = members.map(m=>{
     const s = getMemberStats(m, group);
+    let requestLine = `<span class="meta" style="color:var(--brass-dark);cursor:pointer;text-decoration:underline;" onclick="event.stopPropagation();setRequestedMonth('${m.id}')">set requested payout month</span>`;
+    if(m.requestedMonth && !s.took){
+      const suggested = suggestPayoutAmount(group, m.requestedMonth);
+      requestLine = `<span class="meta" style="cursor:pointer;" onclick="event.stopPropagation();setRequestedMonth('${m.id}')">wants payout in <strong>month ${m.requestedMonth}</strong> (~₹${suggested.toLocaleString('en-IN')}) ✎</span>`;
+    }
     return `<div class="list-item">
       <div style="cursor:pointer;flex:1;" onclick="openMemberHistory('${m.id}')">
         <div><strong>${escapeHtml(m.name)}</strong> ${s.took?'<span class="tag-yes">· took payout</span>':''}</div>
-        <div class="meta">Joined: ${escapeHtml(m.joinMonth || '—')} · Due: <strong class="${s.outstanding>0?'loss':''}">₹${s.outstanding.toLocaleString('en-IN')}</strong> · ${s.remaining} month(s) left · tap to view full history</div>
+        <div class="meta">Joined: ${escapeHtml(m.joinMonth || '—')} · Due: <strong class="${s.outstanding>0?'loss':''}">₹${s.outstanding.toLocaleString('en-IN')}</strong> · ${s.remaining} month(s) left</div>
+        ${!s.took ? `<div style="margin-top:3px;">${requestLine}</div>` : ''}
       </div>
       <button class="btn-danger" onclick="event.stopPropagation();deleteMember('${m.id}')">Remove</button>
     </div>`;
@@ -972,13 +1006,14 @@ function renderOverview(){
   summaryCard.style.display='block';
   tableCard.style.display='block';
 
-  let totalCollected = 0, totalPaidOut = 0, takenCount = 0, totalOutstanding = 0, totalExpected = 0;
+  let totalCollected = 0, totalPaidOut = 0, takenCount = 0, totalOutstanding = 0, totalExpected = 0, totalRequested = 0, requestedCount = 0;
   const rows = members.map(m=>{
     const s = getMemberStats(m, group);
     totalCollected += s.paidSum;
     totalOutstanding += s.outstanding;
     totalExpected += s.expectedFuture;
     if(s.took){ totalPaidOut += s.payoutAmount; takenCount++; }
+    else if(m.requestedMonth){ totalRequested += suggestPayoutAmount(group, m.requestedMonth); requestedCount++; }
     return { id:m.id, name:m.name, totalPaid:s.paidSum, outstanding:s.outstanding,
       took:s.took, monthTaken:s.took?s.takenMonth:'—', payoutAmount:s.payoutAmount, net:s.net };
   });
@@ -989,6 +1024,7 @@ function renderOverview(){
     <div class="stat"><span>In hand / balance</span><span class="val ${(totalCollected-totalPaidOut)>=0?'gain':'loss'}">₹${(totalCollected-totalPaidOut).toLocaleString('en-IN')}</span></div>
     <div class="stat"><span>Outstanding (unpaid, already logged)</span><span class="val ${totalOutstanding>0?'loss':'gain'}">₹${totalOutstanding.toLocaleString('en-IN')}</span></div>
     <div class="stat"><span>Expected to collect (pending months not yet logged)</span><span class="val">₹${totalExpected.toLocaleString('en-IN')}</span></div>
+    ${requestedCount ? `<div class="stat"><span>Needed for requested payouts (${requestedCount} member(s))</span><span class="val loss">₹${totalRequested.toLocaleString('en-IN')}</span></div>` : ''}
     <div class="stat"><span>Taken payout</span><span class="val">${takenCount} of ${members.length}</span></div>
     <div class="stat"><span>Still waiting</span><span class="val">${members.length-takenCount}</span></div>
   `;
@@ -1022,7 +1058,7 @@ function renderBusiness(){
   summaryCard.style.display='block';
   tableCard.style.display='block';
 
-  let grandCollected = 0, grandPaidOut = 0, grandMembers = 0, grandTaken = 0, grandExpected = 0;
+  let grandCollected = 0, grandPaidOut = 0, grandMembers = 0, grandTaken = 0, grandExpected = 0, grandRequested = 0, grandRequestedCount = 0;
   const pendingList = [];
   const groupRows = STATE.groups.map(g=>{
     const members = STATE.members.filter(m=>m.groupId===g.id);
@@ -1032,7 +1068,12 @@ function renderBusiness(){
       collected += s.paidSum;
       expected += s.expectedFuture;
       if(s.took){ paidOut += s.payoutAmount; taken++; }
-      else { pendingList.push({groupId:g.id, groupName:g.name, memberId:m.id, memberName:m.name, paid:s.paidSum, suggestedPayout: g.basePot + (g.after-g.before)*(getMemberNextMonth(m.id)-1)}); }
+      else {
+        if(m.requestedMonth){ grandRequested += suggestPayoutAmount(g, m.requestedMonth); grandRequestedCount++; }
+        pendingList.push({groupId:g.id, groupName:g.name, memberId:m.id, memberName:m.name, paid:s.paidSum,
+          requestedMonth: m.requestedMonth || null,
+          suggestedPayout: suggestPayoutAmount(g, m.requestedMonth || getMemberNextMonth(m.id))});
+      }
     });
     grandCollected += collected;
     grandPaidOut += paidOut;
@@ -1040,6 +1081,12 @@ function renderBusiness(){
     grandTaken += taken;
     grandExpected += expected;
     return { name: g.name, members: members.length, collected, paidOut, profit: collected-paidOut, taken };
+  });
+  pendingList.sort((a,b)=>{
+    if(a.requestedMonth && b.requestedMonth) return a.requestedMonth - b.requestedMonth;
+    if(a.requestedMonth) return -1;
+    if(b.requestedMonth) return 1;
+    return 0;
   });
 
   const grandProfit = grandCollected - grandPaidOut;
@@ -1050,6 +1097,7 @@ function renderBusiness(){
     <div class="stat"><span>Total paid out (all groups)</span><span class="val">₹${grandPaidOut.toLocaleString('en-IN')}</span></div>
     <div class="stat"><span>In hand across the business</span><span class="val ${grandProfit>=0?'gain':'loss'}">₹${grandProfit.toLocaleString('en-IN')}</span></div>
     <div class="stat"><span>Expected to collect (pending months, all groups)</span><span class="val">₹${grandExpected.toLocaleString('en-IN')}</span></div>
+    ${grandRequestedCount ? `<div class="stat"><span>Needed for requested payouts (${grandRequestedCount} member(s))</span><span class="val loss">₹${grandRequested.toLocaleString('en-IN')}</span></div>` : ''}
     <div class="stat"><span>Payouts given</span><span class="val">${grandTaken} of ${grandMembers}</span></div>
   `;
 
@@ -1058,12 +1106,12 @@ function renderBusiness(){
     document.getElementById('bizPending').innerHTML = pendingList.map(p=>
       `<div class="list-item" style="cursor:pointer;" onclick="goToLogEntryForPayout('${p.groupId}','${p.memberId}')">
         <div>
-          <strong>${escapeHtml(p.memberName)}</strong>
+          <strong>${escapeHtml(p.memberName)}</strong> ${p.requestedMonth ? `<span class="tag-yes">· wants month ${p.requestedMonth}</span>` : ''}
           <div class="meta">${escapeHtml(p.groupName)} · paid so far ₹${p.paid.toLocaleString('en-IN')}</div>
         </div>
-        <div class="meta" style="text-align:right;">suggested payout<br><strong style="color:var(--teal);">₹${p.suggestedPayout.toLocaleString('en-IN')}</strong></div>
+        <div class="meta" style="text-align:right;">${p.requestedMonth?'needed':'suggested'}<br><strong style="color:var(--teal);">₹${p.suggestedPayout.toLocaleString('en-IN')}</strong></div>
       </div>`
-    ).join('') + `<div class="meta" style="text-align:center;padding-top:8px;">tap a member to jump straight to logging their payout</div>`;
+    ).join('') + `<div class="meta" style="text-align:center;padding-top:8px;">tap a member to jump straight to logging their payout · members with a requested month are listed first</div>`;
   } else {
     pendingCard.style.display = 'none';
   }
@@ -1077,6 +1125,53 @@ function renderBusiness(){
       <td>₹${r.paidOut.toLocaleString('en-IN')}</td>
       <td class="${r.profit>=0?'gain':'loss'}">₹${r.profit.toLocaleString('en-IN')}</td>
     </tr>`).join('');
+
+  renderMonthWise();
+}
+
+// Groups every logged entry (across all groups) by its free-text "Calendar Month"
+// field into Due / Collected / Payout totals, so the whole business can be viewed
+// one month at a time instead of per group.
+function renderMonthWise(){
+  const card = document.getElementById('bizMonthWiseCard');
+  const entries = STATE.entries.filter(e=>e.calendarMonth && e.calendarMonth.trim());
+  if(!entries.length){ card.style.display = 'none'; return; }
+  card.style.display = 'block';
+
+  const byMonth = {};
+  entries.forEach(e=>{
+    const key = e.calendarMonth.trim();
+    if(!byMonth[key]) byMonth[key] = { due:0, collected:0, payout:0, count:0 };
+    byMonth[key].due += e.amountDue;
+    byMonth[key].collected += e.amountPaid;
+    if(e.tookPayout) byMonth[key].payout += e.payoutAmount;
+    byMonth[key].count++;
+  });
+
+  const now = new Date();
+  const thisMonthLabel = now.toLocaleString('en-US', { month:'short', year:'numeric' }); // e.g. "Aug 2026"
+
+  const keys = Object.keys(byMonth);
+  keys.sort((a,b)=>{
+    const da = Date.parse(a), db = Date.parse(b);
+    if(!isNaN(da) && !isNaN(db)) return da - db;
+    return a.localeCompare(b);
+  });
+
+  const table = document.getElementById('bizMonthWiseTable');
+  table.innerHTML = `<tr><th>Month</th><th>Due</th><th>Collected</th><th>Payout</th><th>Balance</th></tr>` +
+    keys.map(k=>{
+      const d = byMonth[k];
+      const balance = d.collected - d.payout;
+      const isThisMonth = k.toLowerCase() === thisMonthLabel.toLowerCase();
+      return `<tr class="${isThisMonth?'payout-row':''}">
+        <td>${escapeHtml(k)}${isThisMonth?' (this month)':''}</td>
+        <td>₹${d.due.toLocaleString('en-IN')}</td>
+        <td>₹${d.collected.toLocaleString('en-IN')}</td>
+        <td>${d.payout ? '₹'+d.payout.toLocaleString('en-IN') : '—'}</td>
+        <td class="${balance>=0?'gain':'loss'}">₹${balance.toLocaleString('en-IN')}</td>
+      </tr>`;
+    }).join('');
 }
 
 function goToLogEntryForPayout(groupId, memberId){
