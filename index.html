@@ -4,6 +4,21 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Chit Fund Tracker</title>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script>
+  // ====== PASTE YOUR OWN FIREBASE CONFIG HERE (see setup instructions) ======
+  const firebaseConfig = {
+  apiKey: "AIzaSyDtM8WeqSnk-j76mKYonYJORaFeWglcer4",
+  authDomain: "chit-business.firebaseapp.com",
+  projectId: "chit-business",
+  storageBucket: "chit-business.firebasestorage.app",
+  messagingSenderId: "729573799307",
+  appId: "1:729573799307:web:b7f362816ee0e2e22c2b8e",
+  measurementId: "G-PCDXGBM40B"
+  };
+  // ============================================================================
+</script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
   :root{
@@ -246,7 +261,7 @@
     </div>
     <div class="card">
       <h2>Backup &amp; Restore</h2>
-      <div class="meta" style="margin-bottom:10px;">Your data is saved only on this device/browser. Export a backup regularly, especially before clearing browser data or switching phones.</div>
+      <div class="meta" style="margin-bottom:10px;">Your data syncs live to the cloud automatically — open this same link on any device to see the same data. Exporting a backup occasionally is still a good habit.</div>
       <div class="fab-row">
         <button class="btn-ghost" onclick="exportData()">Export Backup</button>
         <button class="btn-ghost" onclick="document.getElementById('importFile').click()">Import Backup</button>
@@ -401,26 +416,44 @@ function toast(msg){
   setTimeout(()=>t.classList.remove('show'), 1600);
 }
 
+// ---------- Firebase (no login — single shared document synced in real time) ----------
+firebase.initializeApp(firebaseConfig);
+const db = firebase.firestore();
+const docRef = db.collection('chitapp').doc('main');
+let suppressNextSnapshot = false;
+
 async function saveState(){
   try{
-    localStorage.setItem('chit-app-state', JSON.stringify(STATE));
+    suppressNextSnapshot = true; // avoid re-rendering from our own echoed write
+    await docRef.set(STATE);
   }catch(e){
-    console.error('Storage save error', e);
-    toast('Could not save — your browser may be blocking storage');
+    console.error('Save error', e);
+    toast('Could not save to the cloud — check your internet connection');
   }
 }
 
 async function loadState(){
-  try{
-    const raw = localStorage.getItem('chit-app-state');
-    if(raw){ STATE = JSON.parse(raw); }
-  }catch(e){
-    console.log('No existing data yet, starting fresh.');
-  }
-  ready = true;
-  document.getElementById('headerSub').textContent =
-    STATE.groups.length ? `${STATE.groups.length} group(s) · saved on this device` : 'Add your first chit group to begin';
-  renderAll();
+  docRef.onSnapshot(snap => {
+    if(suppressNextSnapshot){ suppressNextSnapshot = false; return; }
+    if(snap.exists){
+      const data = snap.data();
+      STATE = {
+        groups: data.groups || [],
+        members: data.members || [],
+        entries: data.entries || [],
+      };
+    } else {
+      STATE = { groups: [], members: [], entries: [] };
+    }
+    ready = true;
+    document.getElementById('headerSub').textContent =
+      STATE.groups.length ? `${STATE.groups.length} group(s) · synced live` : 'Add your first chit group to begin';
+    renderAll();
+  }, err => {
+    console.error('Sync error', err);
+    toast('Could not connect to the cloud database — check your Firebase setup');
+    document.getElementById('headerSub').textContent = 'Offline — could not reach the database';
+  });
 }
 
 // ---------- Tabs ----------
@@ -1427,7 +1460,7 @@ function renderAll(){
   renderGroupPicker('overviewGroupPicker','overview', renderOverview);
   renderOverview();
   document.getElementById('headerSub').textContent =
-    STATE.groups.length ? `${STATE.groups.length} group(s) · saved on this device` : 'Add your first chit group to begin';
+    STATE.groups.length ? `${STATE.groups.length} group(s) · synced live` : 'Add your first chit group to begin';
 }
 
 loadState();
