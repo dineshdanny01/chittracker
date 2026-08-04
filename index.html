@@ -222,6 +222,10 @@
       <div class="meta" style="margin-bottom:10px;">Based on the "Calendar Month" text you entered per log entry — use a consistent format (e.g. "Jul 2026") so months line up correctly.</div>
       <div class="tablewrap"><table id="bizMonthWiseTable"></table></div>
     </div>
+    <div class="card" id="bizInsightsCard" style="display:none;">
+      <h2>Business Insights</h2>
+      <div id="bizInsights"></div>
+    </div>
   </div>
 
   <!-- GROUPS -->
@@ -1196,9 +1200,10 @@ function renderMonthWise(){
   const byMonth = {};
   entries.forEach(e=>{
     const key = e.calendarMonth.trim();
-    if(!byMonth[key]) byMonth[key] = { due:0, collected:0, payout:0, count:0 };
+    if(!byMonth[key]) byMonth[key] = { due:0, collected:0, unpaid:0, payout:0, count:0 };
     byMonth[key].due += e.amountDue;
     byMonth[key].collected += e.amountPaid;
+    byMonth[key].unpaid += Math.max(e.amountDue - e.amountPaid, 0);
     if(e.tookPayout) byMonth[key].payout += e.payoutAmount;
     byMonth[key].count++;
   });
@@ -1213,24 +1218,84 @@ function renderMonthWise(){
     return a.localeCompare(b);
   });
 
+  // Running cumulative profit/loss across the sorted months, plus best/worst
+  // month tracking, feeds the Business Insights card below the table.
+  let cumulative = 0;
+  let bestMonth = null, worstMonth = null;
+  let totalUnpaidAllTime = 0, totalDueAllTime = 0, totalCollectedAllTime = 0;
+  const monthRows = keys.map((k, idx)=>{
+    const d = byMonth[k];
+    const profit = d.collected - d.payout;
+    cumulative += profit;
+    totalUnpaidAllTime += d.unpaid;
+    totalDueAllTime += d.due;
+    totalCollectedAllTime += d.collected;
+    const collectionRate = d.due > 0 ? Math.round((d.collected/d.due)*100) : 100;
+    if(!bestMonth || profit > bestMonth.profit) bestMonth = { key:k, profit };
+    if(!worstMonth || profit < worstMonth.profit) worstMonth = { key:k, profit };
+    const prevProfit = idx>0 ? (byMonth[keys[idx-1]].collected - byMonth[keys[idx-1]].payout) : null;
+    return { key:k, ...d, profit, cumulative, collectionRate, trend: prevProfit===null ? null : (profit>prevProfit?'up':(profit<prevProfit?'down':'flat')) };
+  });
+
   const table = document.getElementById('bizMonthWiseTable');
-  table.innerHTML = `<tr><th>Month</th><th>Due</th><th>Collected</th><th>Payout</th><th>Balance</th></tr>` +
-    keys.map((k,idx)=>{
-      const d = byMonth[k];
-      const balance = d.collected - d.payout;
-      const isThisMonth = k.toLowerCase() === thisMonthLabel.toLowerCase();
+  table.innerHTML = `<tr><th>Month</th><th>Due</th><th>Collected</th><th>Unpaid</th><th>Payout</th><th>Profit/Loss</th><th>Cumulative</th></tr>` +
+    monthRows.map((r,idx)=>{
+      const isThisMonth = r.key.toLowerCase() === thisMonthLabel.toLowerCase();
+      const trendArrow = r.trend==='up' ? ' ▲' : (r.trend==='down' ? ' ▼' : '');
+      const trendClass = r.trend==='up' ? 'gain' : (r.trend==='down' ? 'loss' : '');
       return `<tr class="${isThisMonth?'payout-row':''}" style="cursor:pointer;" data-month-idx="${idx}">
-        <td>${escapeHtml(k)}${isThisMonth?' (this month)':''}</td>
-        <td>₹${d.due.toLocaleString('en-IN')}</td>
-        <td>₹${d.collected.toLocaleString('en-IN')}</td>
-        <td>${d.payout ? '₹'+d.payout.toLocaleString('en-IN') : '—'}</td>
-        <td class="${balance>=0?'gain':'loss'}">₹${balance.toLocaleString('en-IN')}</td>
+        <td>${escapeHtml(r.key)}${isThisMonth?' (this month)':''}</td>
+        <td>₹${r.due.toLocaleString('en-IN')}</td>
+        <td>₹${r.collected.toLocaleString('en-IN')}</td>
+        <td class="${r.unpaid>0?'loss':''}">${r.unpaid>0?'₹'+r.unpaid.toLocaleString('en-IN'):'—'}</td>
+        <td>${r.payout ? '₹'+r.payout.toLocaleString('en-IN') : '—'}</td>
+        <td class="${r.profit>=0?'gain':'loss'}">₹${r.profit.toLocaleString('en-IN')}<span class="${trendClass}">${trendArrow}</span></td>
+        <td class="${r.cumulative>=0?'gain':'loss'}">₹${r.cumulative.toLocaleString('en-IN')}</td>
       </tr>`;
     }).join('') +
-    `<tr><td colspan="5" style="text-align:center;color:#948a78;font-size:0.7rem;padding-top:8px;border-bottom:none;">tap a month to see who paid and who didn't</td></tr>`;
+    `<tr><td colspan="7" style="text-align:center;color:#948a78;font-size:0.7rem;padding-top:8px;border-bottom:none;">tap a month to see who paid and who didn't</td></tr>`;
   table.querySelectorAll('tr[data-month-idx]').forEach(tr=>{
     tr.addEventListener('click', ()=> openMonthDetail(keys[parseInt(tr.dataset.monthIdx, 10)]));
   });
+
+  renderBusinessInsights(monthRows, bestMonth, worstMonth, totalUnpaidAllTime, totalDueAllTime, totalCollectedAllTime);
+}
+
+// Plain-language read on how the business is doing overall, based on the
+// month-wise numbers just computed — meant to surface things worth acting on,
+// not just repeat the table.
+function renderBusinessInsights(monthRows, bestMonth, worstMonth, totalUnpaid, totalDue, totalCollected){
+  const card = document.getElementById('bizInsightsCard');
+  if(monthRows.length < 1){ card.style.display='none'; return; }
+  card.style.display = 'block';
+
+  const overallCollectionRate = totalDue > 0 ? Math.round((totalCollected/totalDue)*100) : 100;
+  const latest = monthRows[monthRows.length-1];
+  const overallCumulative = latest.cumulative;
+
+  const lines = [];
+  lines.push(`<div class="stat"><span>Overall collection rate</span><span class="val ${overallCollectionRate>=90?'gain':(overallCollectionRate<75?'loss':'')}">${overallCollectionRate}%</span></div>`);
+  lines.push(`<div class="stat"><span>Total unpaid (all time, all groups)</span><span class="val ${totalUnpaid>0?'loss':'gain'}">₹${totalUnpaid.toLocaleString('en-IN')}</span></div>`);
+  lines.push(`<div class="stat"><span>Cumulative position (latest month)</span><span class="val ${overallCumulative>=0?'gain':'loss'}">₹${overallCumulative.toLocaleString('en-IN')}</span></div>`);
+  if(bestMonth){
+    lines.push(`<div class="stat"><span>Best month</span><span class="val gain">${escapeHtml(bestMonth.key)} (+₹${bestMonth.profit.toLocaleString('en-IN')})</span></div>`);
+  }
+  if(worstMonth && worstMonth.profit < 0){
+    lines.push(`<div class="stat"><span>Toughest month</span><span class="val loss">${escapeHtml(worstMonth.key)} (₹${worstMonth.profit.toLocaleString('en-IN')})</span></div>`);
+  }
+
+  // A short, plain-language takeaway — the part meant to actually be read.
+  let note = '';
+  if(overallCumulative < 0){
+    note = `You've paid out more than you've collected so far (₹${Math.abs(overallCumulative).toLocaleString('en-IN')} short). This is usually normal mid-cycle if members took early payouts and still owe the higher "after" installments for remaining months — check the "Expected to collect" figures on the Business summary above. If those pending collections wouldn't cover the gap, it's worth reviewing whether payouts are being given out faster than members are paying in.`;
+  } else if(overallCollectionRate < 80){
+    note = `Collection rate is ${overallCollectionRate}% — a meaningful chunk of what's due isn't coming in on time. Worth following up on the "Unpaid" members before approving new payout requests, so cash stays available for members waiting their turn.`;
+  } else {
+    note = `Collections are healthy (${overallCollectionRate}% of due amounts collected) and you're running a positive cumulative balance of ₹${overallCumulative.toLocaleString('en-IN')}. Keep an eye on the "Expected to collect" and "Needed for requested payouts" figures on the Business summary to plan ahead for upcoming payouts.`;
+  }
+
+  document.getElementById('bizInsights').innerHTML = lines.join('') +
+    `<div class="meta" style="margin-top:10px;line-height:1.5;">${note}</div>`;
 }
 
 // ---------- Month Detail (who paid / who didn't for a given calendar month) ----------
@@ -1259,12 +1324,15 @@ function renderMonthDetail(monthKey){
   const entriesThisMonth = STATE.entries.filter(e => e.calendarMonth && e.calendarMonth.trim() === monthKey);
   const paidMemberIds = new Set(entriesThisMonth.map(e=>e.memberId));
 
-  let due=0, collected=0, payout=0, fullyPaidCount=0, shortCount=0;
+  let due=0, collected=0, unpaid=0, payout=0, fullyPaidCount=0, shortCount=0;
   entriesThisMonth.forEach(e=>{
     due += e.amountDue; collected += e.amountPaid;
+    unpaid += Math.max(e.amountDue - e.amountPaid, 0);
     if(e.tookPayout) payout += e.payoutAmount;
     if(e.amountPaid >= e.amountDue) fullyPaidCount++; else shortCount++;
   });
+  const collectionRate = due > 0 ? Math.round((collected/due)*100) : 100;
+  const profit = collected - payout;
 
   // Members whose chit is still running (haven't finished all months) but have
   // no entry logged for this exact calendar month.
@@ -1283,17 +1351,21 @@ function renderMonthDetail(monthKey){
     <div class="stat"><span>Entries logged this month</span><span class="val">${entriesThisMonth.length}</span></div>
     <div class="stat"><span>Fully paid</span><span class="val gain">${fullyPaidCount}</span></div>
     <div class="stat"><span>Short / unpaid</span><span class="val ${shortCount>0?'loss':''}">${shortCount}</span></div>
+    <div class="stat"><span>Collection rate</span><span class="val ${collectionRate>=90?'gain':(collectionRate<75?'loss':'')}">${collectionRate}%</span></div>
     <div class="stat"><span>Due this month</span><span class="val">₹${due.toLocaleString('en-IN')}</span></div>
     <div class="stat"><span>Collected this month</span><span class="val">₹${collected.toLocaleString('en-IN')}</span></div>
+    <div class="stat"><span>Unpaid this month</span><span class="val ${unpaid>0?'loss':'gain'}">₹${unpaid.toLocaleString('en-IN')}</span></div>
     <div class="stat"><span>Payout given this month</span><span class="val">${payout ? '₹'+payout.toLocaleString('en-IN') : '—'}</span></div>
+    <div class="stat"><span>Profit / Loss this month</span><span class="val ${profit>=0?'gain':'loss'}">${profit>=0?'+':''}₹${profit.toLocaleString('en-IN')}</span></div>
     <div class="stat"><span>Not logged this month</span><span class="val ${missing.length>0?'loss':'gain'}">${missing.length}</span></div>
   `;
 
   const paidTable = document.getElementById('monthDetailPaidTable');
-  paidTable.innerHTML = `<tr><th>Member</th><th>Group</th><th>Due</th><th>Paid</th><th>Status</th></tr>` +
+  paidTable.innerHTML = `<tr><th>Member</th><th>Group</th><th>Due</th><th>Paid</th><th>Unpaid</th><th>Status</th></tr>` +
     entriesThisMonth.map(e=>{
       const member = STATE.members.find(m=>m.id===e.memberId);
       const group = STATE.groups.find(g=>g.id===e.groupId);
+      const shortfall = Math.max(e.amountDue - e.amountPaid, 0);
       const status = e.amountPaid >= e.amountDue ? 'Paid' : (e.amountPaid>0 ? 'Partial' : 'Unpaid');
       const statusClass = status==='Paid' ? 'tag-yes' : 'loss';
       return `<tr class="${e.tookPayout?'payout-row':''}">
@@ -1301,9 +1373,10 @@ function renderMonthDetail(monthKey){
         <td>${escapeHtml(group?group.name:'—')}</td>
         <td>₹${e.amountDue.toLocaleString('en-IN')}</td>
         <td>₹${e.amountPaid.toLocaleString('en-IN')}</td>
+        <td class="${shortfall>0?'loss':''}">${shortfall>0?'₹'+shortfall.toLocaleString('en-IN'):'—'}</td>
         <td class="${statusClass}">${status}</td>
       </tr>`;
-    }).join('') || `<tr><td colspan="5" style="text-align:center;color:#948a78;">No entries logged for this month.</td></tr>`;
+    }).join('') || `<tr><td colspan="6" style="text-align:center;color:#948a78;">No entries logged for this month.</td></tr>`;
 
   const missingCard = document.getElementById('monthDetailMissingCard');
   if(missing.length){
